@@ -3,7 +3,7 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::{Buf, Bytes};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use crate::forwarder::TcpConnector;
@@ -100,30 +100,17 @@ impl pipe::Source for StreamRx {
     }
 
     async fn read(&mut self) -> io::Result<pipe::Data> {
-        loop {
-            match self.rx.readable().await {
-                Ok(_) => break,
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
-                Err(e) => return Err(e),
-            }
-        }
-
         const READ_CHUNK_SIZE: usize = 64 * 1024;
         let mut buffer = Vec::with_capacity(READ_CHUNK_SIZE);
 
-        const READ_BUDGET: usize = 16;
-        for _ in 0..READ_BUDGET {
-            match self.rx.try_read_buf(&mut buffer) {
-                Ok(0) => return Ok(pipe::Data::Eof),
-                Ok(_) => if buffer.capacity() == buffer.len() {
-                    break;
-                }
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
-                Err(e) => return Err(e),
+        loop {
+            match self.rx.read_buf(&mut buffer).await {
+                Ok(0) => break Ok(pipe::Data::Eof),
+                Ok(_) => break Ok(pipe::Data::Chunk(Bytes::from(buffer))),
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
+                Err(e) => break Err(e),
             }
         }
-
-        Ok(pipe::Data::Chunk(Bytes::from(buffer)))
     }
 
     fn consume(&mut self, _size: usize) -> io::Result<()> {

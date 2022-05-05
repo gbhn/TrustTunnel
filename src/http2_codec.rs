@@ -7,22 +7,21 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use h2::{Reason, RecvStream, SendStream, server};
 use h2::server::{Connection, Handshake, SendResponse};
-use tokio::net::TcpStream;
-use tokio_rustls::server::TlsStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use crate::http_codec::{HttpCodec, RequestHeaders, ResponseHeaders};
 use crate::{datagram_pipe, http_codec, log_id, log_utils, pipe};
 use crate::settings::{ListenProtocolSettings, Settings};
 
 
-pub(crate) struct Http2Codec {
-    state: State,
+pub(crate) struct Http2Codec<IO> {
+    state: State<IO>,
     parent_id_chain: log_utils::IdChain<u64>,
     next_conn_id: std::ops::RangeFrom<u64>,
 }
 
-enum State {
-    Handshake(Handshake<TlsStream<TcpStream>>),
-    Established(Connection<TlsStream<TcpStream>, Bytes>),
+enum State<IO> {
+    Handshake(Handshake<IO>),
+    Established(Connection<IO, Bytes>),
 }
 
 
@@ -53,10 +52,10 @@ struct RespondStream {
 }
 
 
-impl Http2Codec {
+impl<IO: AsyncRead + AsyncWrite + Unpin> Http2Codec<IO> {
     pub fn new(
         core_settings: Arc<Settings>,
-        transport_stream: TlsStream<TcpStream>,
+        transport_stream: IO,
         parent_id_chain: log_utils::IdChain<u64>,
     ) -> Self {
         let http2_settings = core_settings.listen_protocols.iter()
@@ -84,7 +83,7 @@ impl Http2Codec {
 }
 
 #[async_trait]
-impl HttpCodec for Http2Codec {
+impl<IO: AsyncRead + AsyncWrite + Send + Unpin> HttpCodec for Http2Codec<IO> {
     async fn listen(&mut self) -> io::Result<Option<Box<dyn http_codec::Stream>>> {
         if let State::Handshake(handshake) = &mut self.state {
             self.state = State::Established(handshake.await.map_err(h2_to_io_error)?);

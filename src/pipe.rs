@@ -1,13 +1,23 @@
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Display, Formatter};
 use std::io;
 use std::io::ErrorKind;
 use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use future::Either;
-use futures::future;
+use futures::{future, FutureExt};
 use tokio::time::Instant;
 use crate::{log_id, log_utils};
+
+
+macro_rules! log_dir {
+    ($lvl:ident, $id_chain:expr, $direction:expr, $msg:expr) => {
+        log_id!($lvl, $id_chain, std::concat!("{} ", $msg), $direction)
+    };
+    ($lvl:ident, $id_chain:expr, $direction:expr, $fmt:expr, $($arg:tt)*) => {
+        log_id!($lvl, $id_chain, std::concat!("{} ", $fmt), $direction, $($arg)*)
+    };
+}
 
 
 pub(crate) enum Data {
@@ -52,7 +62,7 @@ pub(crate) trait Sink: Send {
     async fn wait_writable(&mut self) -> io::Result<()>;
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub(crate) enum SimplexPipeDirection {
     /// Packet goes from a peer to a client
     Incoming,
@@ -111,18 +121,24 @@ impl SimplexPipe {
     /// Initiate data exchange until the `Source` is closed or some error happened
     pub async fn exchange<T: Copy>(&mut self, id: T, timeout: Duration) -> Result<T, Error<T>> {
         loop {
-            let data = match self.pending_chunk.take() {
-                None => {
-                    let x = tokio::time::timeout(timeout, self.source.read()).await
-                        .unwrap_or_else(|_| Err(io::Error::from(ErrorKind::TimedOut)))
-                        .map_err(|e| io_to_pipe_error(id, e))?;
-                    log_id!(trace, self.source.id(), "{} TCP data: {}", self.direction, x);
-                    x
-                },
-                Some(x) => x,
+            self.last_activity = Instant::now();
+
+            let future = match self.pending_chunk.take() {
+                None => async {
+                    let x = self.source.read().await?;
+                    log_dir!(trace, self.source.id(), self.direction, "TCP data: {}", x);
+                    Ok(x)
+                }.boxed(),
+                Some(x) => async {
+                    self.sink.wait_writable().await?;
+                    log_dir!(trace, self.sink.id(), self.direction, "Sending unsent");
+                    Ok(x)
+                }.boxed(),
             };
 
-            self.last_activity = Instant::now();
+            let data = tokio::time::timeout(timeout, future).await
+                .unwrap_or_else(|_| Err(io::Error::from(ErrorKind::TimedOut)))
+                .map_err(|e| io_to_pipe_error(id, e))?;
 
             match data {
                 Data::Chunk(bytes) => {
@@ -132,11 +148,8 @@ impl SimplexPipe {
                     self.source.consume(data_len - unsent_data.len())
                         .map_err(|e| io_to_pipe_error(id, e))?;
                     if !unsent_data.is_empty() {
-                        log_id!(trace, self.source.id(), "{} Unsent: {} bytes", self.direction, unsent_data.len());
+                        log_dir!(trace, self.source.id(), self.direction, "Unsent: {} bytes", unsent_data.len());
                         self.pending_chunk = Some(Data::Chunk(unsent_data));
-                        tokio::time::timeout(timeout, self.sink.wait_writable()).await
-                            .unwrap_or_else(|_| Err(io::Error::from(ErrorKind::TimedOut)))
-                            .map_err(|e| io_to_pipe_error(id, e))?;
                     }
                 }
                 Data::Eof => return self.sink.eof()
@@ -190,17 +203,17 @@ impl DuplexPipe {
         match future::try_select(f1, f2).await {
             Ok(Either::Left((dir, another)))
             | Ok(Either::Right((dir, another))) => {
-                log_id!(trace, id, "Pipe gracefully closed: direction={:?}", dir);
+                log_dir!(trace, id, dir, "Pipe gracefully closed");
                 another.await
                     .map(|_| ())
                     .map_err(|e| {
-                        log_id!(debug, id, "Error on pipe: direction={:?}, error={}", e.id, e.io);
+                        log_dir!(debug, id, e.id, "Error on pipe: {}", e.io);
                         e.io
                     })
             }
             Err(Either::Left((e, _))) | Err(Either::Right((e, _))) => {
                 if e.io.kind() != ErrorKind::WouldBlock {
-                    log_id!(debug, id, "Error on pipe: direction={:?}, error={}", e.id, e.io);
+                    log_dir!(debug, id, e.id, "Error on pipe: {}", e.io);
                 }
                 Err(e.io)
             }

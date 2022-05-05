@@ -4,10 +4,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
-use tokio_rustls::server::TlsStream;
 use crate::{datagram_pipe, http_codec, log_id, log_utils, pipe, utils};
 use crate::http_codec::{RequestHeaders, ResponseHeaders};
 use crate::settings::Settings;
@@ -18,9 +16,9 @@ const MAX_HEADERS_NUM: usize = 32;
 const TRAFFIC_READ_CHUNK_SIZE: usize = 16 * 1024;
 
 
-pub(crate) struct Http1Codec {
+pub(crate) struct Http1Codec<IO> {
     state: State,
-    transport_stream: TlsStream<TcpStream>,
+    transport_stream: IO,
     /// Receives messages from [`StreamSink.download_tx`]
     download_rx: mpsc::Receiver<Option<Bytes>>,
     /// See [`StreamSink.download_tx`]
@@ -71,10 +69,10 @@ enum RequestStatus {
 }
 
 
-impl Http1Codec {
+impl<IO> Http1Codec<IO> {
     pub fn new(
         _core_settings: Arc<Settings>,
-        transport_stream: TlsStream<TcpStream>,
+        transport_stream: IO,
         parent_id_chain: log_utils::IdChain<u64>,
     ) -> Self {
         let (download_tx, download_rx) = mpsc::channel(1);
@@ -183,71 +181,53 @@ impl Http1Codec {
 }
 
 #[async_trait]
-impl http_codec::HttpCodec for Http1Codec {
+impl<IO: AsyncRead + AsyncWrite + Send + Unpin> http_codec::HttpCodec for Http1Codec<IO> {
     async fn listen(&mut self) -> io::Result<Option<Box<dyn http_codec::Stream>>> {
-        enum FiredEvent {
-            Read(BytesMut),
-            Stream(Option<Bytes>),
-        }
-
         loop {
-            let event = {
+            let wait_read = async {
                 let mut buffer = self.state.take_buffer();
-                let wait_read = async {
-                    if matches!(self.state, State::RequestInProgress(_)) {
-                        let _ = self.upload_tx.reserve().await;
-                    }
-                    self.transport_stream.read_buf(&mut buffer).await?;
-                    Ok(buffer)
-                };
-                tokio::pin!(wait_read);
-
-                let wait_stream_event = self.download_rx.recv();
-                tokio::pin!(wait_stream_event);
-
-                tokio::select! {
-                    r = wait_read => match r {
-                        Ok(bytes) => FiredEvent::Read(bytes),
-                        Err(e) => return Err(e),
-                    },
-                    r = wait_stream_event => match r {
-                        None => return Err(io::Error::from(ErrorKind::UnexpectedEof)),
-                        Some(bytes) => FiredEvent::Stream(bytes),
-                    },
+                if matches!(self.state, State::RequestInProgress(_)) {
+                    let _ = self.upload_tx.reserve().await;
                 }
+                self.transport_stream.read_buf(&mut buffer).await?;
+                Ok(buffer)
             };
 
-            match event {
-                FiredEvent::Read(bytes) => match &mut self.state {
-                    State::WaitingRequest(_) => if bytes.is_empty() {
-                        return Ok(None);
-                    } else {
-                        match self.on_request_headers_chunk(bytes)? {
-                            RequestStatus::Partial => (),
-                            RequestStatus::Complete(stream) => return Ok(Some(stream)),
-                            RequestStatus::NeedRespond(response) => {
-                                log_id!(debug, self.parent_id_chain, "Tunnel rejected, responding with: {:?}", response);
-                                let mut response = serialize_response(response);
-                                self.transport_stream.write_all_buf(&mut response).await?;
-                                return Ok(None);
+            tokio::select! {
+                r = wait_read => match r {
+                    Ok(bytes) => match &mut self.state {
+                        State::WaitingRequest(_) => if bytes.is_empty() {
+                            return Ok(None);
+                        } else {
+                            match self.on_request_headers_chunk(bytes)? {
+                                RequestStatus::Partial => (),
+                                RequestStatus::Complete(stream) => return Ok(Some(stream)),
+                                RequestStatus::NeedRespond(response) => {
+                                    log_id!(debug, self.parent_id_chain, "Tunnel rejected, responding with: {:?}", response);
+                                    let mut response = serialize_response(response);
+                                    self.transport_stream.write_all_buf(&mut response).await?;
+                                    return Ok(None);
+                                }
                             }
                         }
-                    }
-                    State::RequestInProgress(x) => {
-                        x.buffer = BytesMut::with_capacity(TRAFFIC_READ_CHUNK_SIZE);
-                        match self.upload_tx.send((!bytes.is_empty()).then(|| bytes.freeze())).await {
-                            Ok(_) => (),
-                            Err(_) => return Err(io::Error::from(ErrorKind::UnexpectedEof)),
+                        State::RequestInProgress(x) => {
+                            x.buffer = BytesMut::with_capacity(TRAFFIC_READ_CHUNK_SIZE);
+                            match self.upload_tx.send((!bytes.is_empty()).then(|| bytes.freeze())).await {
+                                Ok(_) => (),
+                                Err(_) => return Err(io::Error::from(ErrorKind::UnexpectedEof)),
+                            }
                         }
+                    },
+                    Err(e) => return Err(e),
+                },
+                r = self.download_rx.recv() => match r {
+                    None => return Err(io::Error::from(ErrorKind::UnexpectedEof)),
+                    Some(None) => {
+                        self.transport_stream.shutdown().await?;
+                        return Ok(None);
                     }
-                }
-                FiredEvent::Stream(Some(mut bytes)) => {
-                    self.transport_stream.write_all_buf(&mut bytes).await?;
-                }
-                FiredEvent::Stream(None) => {
-                    self.transport_stream.shutdown().await?;
-                    return Ok(None);
-                }
+                    Some(Some(mut bytes)) => self.transport_stream.write_all_buf(&mut bytes).await?,
+                },
             }
         }
     }
@@ -354,8 +334,12 @@ impl pipe::Sink for StreamSink {
     }
 
     fn eof(&mut self) -> io::Result<()> {
-        self.download_tx.blocking_send(None)
-            .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let _ = self.download_tx.send(None).await;
+                Ok(())
+            })
+        })
     }
 
     async fn wait_writable(&mut self) -> io::Result<()> {

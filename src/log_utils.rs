@@ -80,6 +80,7 @@ impl<T: Copy + serde::ser::Serialize> Display for IdChain<T> {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use crate::log_utils::{IdChain, IdItem};
 

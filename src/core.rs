@@ -88,7 +88,6 @@ impl Core {
             tokio::runtime::Builder::new_multi_thread()
                 .enable_io()
                 .enable_time()
-                .max_blocking_threads(1) // tokio does not allow to turn it off
                 .worker_threads(threads_num)
                 .build()?
         };
@@ -116,7 +115,9 @@ impl Core {
             let client_id = log_utils::IdChain::from(log_utils::IdItem::new(
                 log_utils::CLIENT_ID_FMT, self.context.next_client_id.fetch_add(1, Ordering::Relaxed)
             ));
-            let stream = match tcp_listener.accept().await {
+            let stream = match tcp_listener.accept().await
+                .and_then(|(s, a)| { s.set_nodelay(true)?; Ok((s, a)) })
+            {
                 Ok((stream, addr)) => if has_tcp_based_codec {
                     log_id!(debug, client_id, "New TCP client: {}", addr);
                     stream

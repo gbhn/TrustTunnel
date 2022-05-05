@@ -19,7 +19,7 @@ Execute the following commands in Terminal:
 openssl req -config <openssl.conf> -new -x509 -sha256 -newkey rsa:2048 -nodes -days 1000 -keyout key.pem -out cert.pem
 ```
 where
-* `<openssl.conf>` is an OpenSSL request template file
+* `<openssl.conf>` is an optional OpenSSL request template file
 
 ## Endpoint configuration
 
@@ -52,3 +52,16 @@ cd ../examples/my_vpn && ./run.sh
 ```
 It may ask you to enter some information for generating your certificate.
 Skip it clicking `enter` if it does not matter.
+
+## Testing with Google Chrome
+
+1) 2 options:
+   * Add the generated certificate to the trusted store and run the Google Chrome
+   * Run the Google Chrome from Terminal like this:
+    ```shell
+    google-chrome --ignore-certificate-errors
+    ```
+   **IMPORTANT:** the second option should be used just for testing, it removes the first line
+                  of defence against malicious resources
+2) Set up the endpoint as an HTTPS proxy server in the browser (either via browser settings or 
+using an extension like `Proxy SwitchyOmega`)

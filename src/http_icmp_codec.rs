@@ -1,21 +1,21 @@
+//! Outgoing ICMP packet format (sent from us to client)
+//!
+//! +----------+----------------+--------+--------+-----------------+
+//! |  ID      | Source address | Type   | Code   | Sequence number |
+//! | 2 bytes  |  16 bytes      | 1 byte | 1 byte | 2 bytes         |
+//! +----------+----------------+--------+--------+-----------------+
+//!
+//! Incoming ICMP packet format (sent from client to us)
+//!
+//! +----------+---------------------+-----------------+---------------+-----------+
+//! |  ID      | Destination address | Sequence number | TTL/Hop limit | Data size |
+//! | 2 bytes  |  16 bytes           | 2 bytes         | 1 byte        | 2 bytes   |
+//! +----------+---------------------+-----------------+---------------+-----------+
+
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use ring::rand::SecureRandom;
 use crate::{downstream, forwarder, http_datagram_codec, icmp_utils, net_utils};
-
-
-/// Outgoing ICMP packet format (sent from us to client)
-///
-/// +----------+----------------+--------+--------+-----------------+
-/// |  ID      | Source address | Type   | Code   | Sequence number |
-/// | 2 bytes  |  16 bytes      | 1 byte | 1 byte | 2 bytes         |
-/// +----------+----------------+--------+--------+-----------------+
-///
-/// Incoming ICMP packet format (sent from client to us)
-///
-/// +----------+---------------------+-----------------+---------------+-----------+
-/// |  ID      | Destination address | Sequence number | TTL/Hop limit | Data size |
-/// | 2 bytes  |  16 bytes           | 2 bytes         | 1 byte        | 2 bytes   |
-/// +----------+---------------------+-----------------+---------------+-----------+
 
 
 const ICMPPKT_ID_SIZE: usize = 2;

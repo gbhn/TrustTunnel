@@ -1,21 +1,21 @@
+//! Outgoing UDP packet format (sent from us to client)
+//!
+//! +----------+----------------+-------------+---------------------+------------------+---------+
+//! |  Length  | Source address | Source port | Destination address | Destination port | Payload |
+//! | 4 bytes  |  16 bytes      | 2 bytes     |  16 bytes           | 2 bytes          | N bytes |
+//! +----------+----------------+-------------+---------------------+------------------+---------+
+//!
+//! Incoming UDP packet format (sent from client to us)
+//!
+//! +----------+----------------+-------------+---------------------+------------------+------------------+----------+---------+
+//! |  Length  | Source address | Source port | Destination address | Destination port | App name len (L) | App name | Payload |
+//! | 4 bytes  |  16 bytes      | 2 bytes     |  16 bytes           | 2 bytes          | 1 byte           | L bytes  | N bytes |
+//! +----------+----------------+-------------+---------------------+------------------+------------------+----------+---------+
+
+
 use std::net::SocketAddr;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crate::{downstream, forwarder, http_datagram_codec, log_id, log_utils, net_utils};
-
-
-/// Outgoing UDP packet format (sent from us to client)
-///
-/// +----------+----------------+-------------+---------------------+------------------+---------+
-/// |  Length  | Source address | Source port | Destination address | Destination port | Payload |
-/// | 4 bytes  |  16 bytes      | 2 bytes     |  16 bytes           | 2 bytes          | N bytes |
-/// +----------+----------------+-------------+---------------------+------------------+---------+
-///
-/// Incoming UDP packet format (sent from client to us)
-///
-/// +----------+----------------+-------------+---------------------+------------------+------------------+----------+---------+
-/// |  Length  | Source address | Source port | Destination address | Destination port | App name len (L) | App name | Payload |
-/// | 4 bytes  |  16 bytes      | 2 bytes     |  16 bytes           | 2 bytes          | 1 byte           | L bytes  | N bytes |
-/// +----------+----------------+-------------+---------------------+------------------+------------------+----------+---------+
 
 
 const UDPPKT_LENGTH_SIZE: usize = 4;
