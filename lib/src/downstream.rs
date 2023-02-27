@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 use async_trait::async_trait;
 use bytes::Bytes;
 use crate::{authentication, datagram_pipe, forwarder, icmp_utils, log_utils, pipe, tunnel};
-use crate::protocol_selector::Protocol;
+use crate::tls_demultiplexer::Protocol;
 use crate::net_utils::TcpDestination;
 
 

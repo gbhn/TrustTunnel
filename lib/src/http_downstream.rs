@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use crate::downstream::Downstream;
 use crate::{authentication, datagram_pipe, downstream, http_codec, http_datagram_codec, http_forwarded_stream, http_icmp_codec, http_udp_codec, log_id, log_utils, net_utils, pipe, tunnel};
-use crate::protocol_selector::Protocol;
+use crate::tls_demultiplexer::Protocol;
 use crate::http_codec::HttpCodec;
 use crate::net_utils::TcpDestination;
 use crate::settings::Settings;

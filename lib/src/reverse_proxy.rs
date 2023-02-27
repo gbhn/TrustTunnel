@@ -8,7 +8,7 @@ use crate::forwarder::TcpConnector;
 use crate::http_codec::HttpCodec;
 use crate::net_utils::TcpDestination;
 use crate::pipe::DuplexPipe;
-use crate::protocol_selector::Protocol;
+use crate::tls_demultiplexer::Protocol;
 use crate::tcp_forwarder::TcpForwarder;
 
 
@@ -18,6 +18,7 @@ const ORIGINAL_PROTOCOL_HEADER: &str = "X-Original-Protocol";
 pub(crate) async fn listen(
     context: Arc<core::Context>,
     mut codec: Box<dyn HttpCodec>,
+    sni: String,
     log_id: log_utils::IdChain<u64>,
 ) {
     let (mut shutdown_notification, _shutdown_completion) = {
@@ -32,7 +33,7 @@ pub(crate) async fn listen(
                 Err(e) => log_id!(debug, log_id, "Shutdown notification failure: {}", e),
             }
         },
-        x = listen_inner(context, codec.as_mut(), &log_id) => {
+        x = listen_inner(context, codec.as_mut(), sni, &log_id) => {
             match x {
                 Ok(_) => (),
                 Err(e) => log_id!(debug, log_id, "Request processing failure: {}", e),
@@ -48,11 +49,12 @@ pub(crate) async fn listen(
 async fn listen_inner(
     context: Arc<core::Context>,
     codec: &mut dyn HttpCodec,
+    sni: String,
     log_id: &log_utils::IdChain<u64>,
 ) -> io::Result<()> {
     let mut pipe = match tokio::time::timeout(
         context.settings.reverse_proxy.as_ref().unwrap().connection_timeout,
-        establish_tunnel(&context, codec, log_id)
+        establish_tunnel(&context, codec, sni, log_id)
     ).await.map_err(|_| io::Error::from(ErrorKind::TimedOut))?? {
         Some(((client_source, client_sink), (server_source, server_sink))) =>
             DuplexPipe::new(
@@ -83,6 +85,7 @@ async fn listen_inner(
 async fn establish_tunnel(
     context: &core::Context,
     codec: &mut dyn HttpCodec,
+    sni: String,
     log_id: &log_utils::IdChain<u64>,
 ) -> io::Result<Option<(
     (Box<dyn pipe::Source>, Box<dyn pipe::Sink>),
@@ -104,7 +107,7 @@ async fn establish_tunnel(
             client_address: Ipv4Addr::UNSPECIFIED.into(),
             destination: TcpDestination::Address(context.settings.reverse_proxy.as_ref().unwrap().server_address),
             auth: None,
-            tls_domain: context.settings.reverse_proxy.as_ref().unwrap().tls_info.hostname.clone(),
+            tls_domain: sni,
             user_agent: None,
         },
     ).await.map_err(|e| match e {

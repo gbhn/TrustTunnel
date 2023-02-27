@@ -11,7 +11,7 @@ use h2::server::{Connection, Handshake, SendResponse};
 use tokio::io::{AsyncRead, AsyncWrite};
 use crate::http_codec::{HttpCodec, RequestHeaders, ResponseHeaders};
 use crate::{datagram_pipe, http_codec, log_id, log_utils, net_utils, pipe};
-use crate::protocol_selector::Protocol;
+use crate::tls_demultiplexer::Protocol;
 use crate::settings::{ListenProtocolSettings, Settings};
 
 

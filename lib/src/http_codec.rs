@@ -6,7 +6,7 @@ use bytes::Bytes;
 use http::{Response, StatusCode};
 use http::uri::Authority;
 use crate::{authentication, datagram_pipe, log_utils, pipe};
-use crate::protocol_selector::Protocol;
+use crate::tls_demultiplexer::Protocol;
 
 
 pub(crate) type RequestHeaders = http::request::Parts;

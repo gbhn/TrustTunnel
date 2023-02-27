@@ -6,7 +6,7 @@ use bytes::Bytes;
 use prometheus::Encoder;
 use tokio::net::{TcpListener, TcpStream};
 use crate::{core, http_codec, log_id, log_utils};
-use crate::protocol_selector::Protocol;
+use crate::tls_demultiplexer::Protocol;
 use crate::http1_codec::Http1Codec;
 use crate::http_codec::HttpCodec;
 

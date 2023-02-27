@@ -1,31 +1,22 @@
 use std::io;
 use std::io::ErrorKind;
 use std::sync::Arc;
-use rustls::ServerConfig;
+use rustls::{Certificate, PrivateKey, ServerConfig};
 use tokio::net::TcpStream;
 use tokio_rustls::{LazyConfigAcceptor, StartHandshake};
 use tokio_rustls::server::TlsStream;
-use crate::{log_utils, utils};
-use crate::protocol_selector::Channel;
-use crate::settings::Settings;
+use crate::{log_utils, tls_demultiplexer};
 
 
-pub(crate) struct TlsListener {
-    core_settings: Arc<Settings>,
-}
+pub(crate) struct TlsListener {}
 
 pub(crate) struct TlsAcceptor {
     inner: StartHandshake<TcpStream>,
-    core_settings: Arc<Settings>,
 }
 
 impl TlsListener {
-    pub fn new(
-        core_settings: Arc<Settings>,
-    ) -> Self {
-        Self {
-            core_settings,
-        }
+    pub fn new() -> Self {
+        Self {}
     }
 
     pub async fn listen(&self, stream: TcpStream) -> io::Result<TlsAcceptor> {
@@ -33,7 +24,6 @@ impl TlsListener {
             .await
             .map(|hs| TlsAcceptor {
                 inner: hs,
-                core_settings: self.core_settings.clone(),
             })
     }
 }
@@ -43,63 +33,30 @@ impl TlsAcceptor {
         self.inner.client_hello().server_name().map(String::from)
     }
 
-    pub fn alpn(&self) -> Option<Vec<u8>> {
+    pub fn alpn(&self) -> Vec<Vec<u8>> {
         self.inner.client_hello()
             .alpn()
-            .and_then(|mut a| a.next())
-            .map(Vec::from)
+            .map(|x| x.map(Vec::from).collect())
+            .unwrap_or_default()
     }
 
-    pub async fn accept(self, channel: Channel, _log_id: &log_utils::IdChain<u64>) -> io::Result<TlsStream<TcpStream>> {
-        let settings = &self.core_settings;
-        let tunnel_tls_info = &settings.tunnel_tls_host_info;
-        let ping_tls_info = settings.ping_tls_host_info.as_ref();
-        let speed_tls_info = settings.speed_tls_host_info.as_ref();
-        let sm_tls_info = settings.reverse_proxy.as_ref().map(|x| &x.tls_info);
-
-        let (cert_file, key_file) = match channel {
-            Channel::Ping(_) => (
-                &ping_tls_info.unwrap().cert_chain_path,
-                &ping_tls_info.unwrap().private_key_path,
-            ),
-            Channel::Speed(_) => (
-                &speed_tls_info.unwrap().cert_chain_path,
-                &speed_tls_info.unwrap().private_key_path,
-            ),
-            Channel::ReverseProxy(_) => (
-                &sm_tls_info.unwrap().cert_chain_path,
-                &sm_tls_info.unwrap().private_key_path,
-            ),
-            Channel::Tunnel(_) => match self.inner.client_hello().server_name() {
-                None => return Err(io::Error::new(ErrorKind::Other, "Client hello has no SNI")),
-                Some(x) if x == tunnel_tls_info.hostname => (
-                    &tunnel_tls_info.cert_chain_path,
-                    &tunnel_tls_info.private_key_path,
-                ),
-                // For the SNI authentication later in tunnel
-                Some(x) if x.strip_suffix(&tunnel_tls_info.hostname)
-                    .and_then(|x| x.strip_suffix('.'))
-                    .is_some()
-                => (
-                    &tunnel_tls_info.cert_chain_path,
-                    &tunnel_tls_info.private_key_path,
-                ),
-                Some(x) => return Err(io::Error::new(
-                    ErrorKind::Other, format!("Unexpected server name in client hello: {}", x)
-                )),
-            }
-        };
-
+    pub async fn accept(
+        self,
+        protocol: tls_demultiplexer::Protocol,
+        cert_chain: Vec<Certificate>,
+        key: PrivateKey,
+        _log_id: &log_utils::IdChain<u64>,
+    ) -> io::Result<TlsStream<TcpStream>> {
         let tls_config = {
             let mut cfg = ServerConfig::builder()
                 .with_safe_defaults()
                 .with_no_client_auth()
-                .with_single_cert(utils::load_certs(cert_file)?, utils::load_private_key(key_file)?)
+                .with_single_cert(cert_chain, key)
                 .map_err(|e| io::Error::new(
                     ErrorKind::Other, format!("Failed to create TLS configuration: {}", e))
                 )?;
 
-            cfg.alpn_protocols = vec![channel.as_alpn().as_bytes().to_vec()];
+            cfg.alpn_protocols = vec![protocol.as_alpn().as_bytes().to_vec()];
             Arc::new(cfg)
         };
 

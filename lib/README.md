@@ -4,7 +4,7 @@
 
 ### Prerequisites
 
-* Rust 1.59.0 or higher: use a preferred way from https://www.rust-lang.org/tools/install
+* Rust 1.67 or higher: use a preferred way from https://www.rust-lang.org/tools/install
 
 ### Building
 

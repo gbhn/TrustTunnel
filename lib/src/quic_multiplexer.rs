@@ -13,9 +13,10 @@ use quiche::h3::NameValue;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
-use crate::{log_id, log_utils, net_utils, utils};
+use crate::{log_id, log_utils, net_utils, tls_demultiplexer, utils};
 use crate::http_codec::{RequestHeaders, ResponseHeaders};
-use crate::settings::{ListenProtocolSettings, Settings, TlsHostInfo};
+use crate::settings::{ListenProtocolSettings, Settings};
+use crate::tls_demultiplexer::TlsDemux;
 
 
 const TOKEN_PREFIX_SIZE: usize = 16;
@@ -36,6 +37,7 @@ pub(crate) struct QuicMultiplexer {
     connections: HashMap<quiche::ConnectionId<'static>, Connection>,
     deadlines: HashMap<quiche::ConnectionId<'static>, Instant>,
     closest_deadline: Option<Instant>,
+    tls_demux: Arc<TlsDemux>,
     token_prefix: [u8; TOKEN_PREFIX_SIZE],
     id: log_utils::IdChain<u64>,
     next_socket_id: Arc<AtomicU64>,
@@ -52,6 +54,7 @@ pub(crate) struct QuicSocket {
     h3_conn: Arc<std::sync::Mutex<h3::Connection>>,
     waiting_writable_streams: std::sync::Mutex<HashSet<u64>>,
     id: log_utils::IdChain<u64>,
+    tls_connection_meta: tls_demultiplexer::ConnectionMeta,
 }
 
 pub(crate) enum QuicSocketEvent {
@@ -76,6 +79,7 @@ enum SocketMessage {
 struct HandshakingConnection {
     quic_conn: Arc<std::sync::Mutex<QuicConnection>>,
     local_address: SocketAddr,
+    tls_connection_meta: tls_demultiplexer::ConnectionMeta,
 }
 
 struct EstablishedConnection {
@@ -99,16 +103,12 @@ enum HandshakeStatus {
     Complete,
 }
 
-enum ServerNameCheckStatus<'a> {
-    Ok,
-    RetryAs(&'a TlsHostInfo),
-}
-
 
 impl QuicMultiplexer {
     pub fn new(
         core_settings: Arc<Settings>,
         socket: UdpSocket,
+        tls_demux: Arc<TlsDemux>,
         next_socket_id: Arc<AtomicU64>,
     ) -> Self {
         let queue_cap = core_settings.listen_protocols.iter()
@@ -128,6 +128,7 @@ impl QuicMultiplexer {
             connections: Default::default(),
             deadlines: Default::default(),
             closest_deadline: None,
+            tls_demux,
             token_prefix: ring::rand::generate(&ring::rand::SystemRandom::new()).unwrap().expose(),
             id: log_utils::IdChain::from(log_utils::IdItem::new(MUX_ID_FMT, 0)),
             next_socket_id,
@@ -276,40 +277,6 @@ impl QuicMultiplexer {
         result.ok().flatten()
     }
 
-    fn check_server_name(&self, sni: Option<&str>) -> io::Result<ServerNameCheckStatus> {
-        let settings = &self.core_settings;
-
-        match sni {
-            Some(x) if x == settings.tunnel_tls_host_info.hostname => Ok(ServerNameCheckStatus::Ok),
-            // For the SNI authentication later in tunnel
-            Some(x) if x.strip_suffix(&settings.tunnel_tls_host_info.hostname)
-                .and_then(|x| x.strip_suffix('.'))
-                .is_some()
-            => Ok(ServerNameCheckStatus::Ok),
-            Some(x) if settings.ping_tls_host_info.as_ref().map_or(
-                false, |info| info.hostname == x,
-            ) =>
-                Ok(ServerNameCheckStatus::RetryAs(
-                    settings.ping_tls_host_info.as_ref().unwrap(),
-                )),
-            Some(x) if settings.speed_tls_host_info.as_ref().map_or(
-                false, |info| info.hostname == x,
-            ) =>
-                Ok(ServerNameCheckStatus::RetryAs(
-                    settings.speed_tls_host_info.as_ref().unwrap(),
-                )),
-            Some(x) if settings.reverse_proxy.as_ref().map_or(
-                false, |s| s.tls_info.hostname == x,
-            ) =>
-                Ok(ServerNameCheckStatus::RetryAs(
-                    &settings.reverse_proxy.as_ref().unwrap().tls_info,
-                )),
-            x => return Err(io::Error::new(
-                ErrorKind::Other, format!("Unexpected server name in TLS handshake: {:?}", x),
-            )),
-        }
-    }
-
     fn on_unknown_quic_packet(&self, peer: &SocketAddr, header: &quiche::Header<'_>)
                               -> io::Result<UnknownPacketStatus>
     {
@@ -367,7 +334,8 @@ impl QuicMultiplexer {
 
     fn accept_quic_connection<'a>(
         &self,
-        tls_host_info: &TlsHostInfo,
+        cert_chain_path: &str,
+        key_path: &str,
         scid: &quiche::ConnectionId<'a>,
         odcid: Option<&quiche::ConnectionId<'a>>,
         peer: &SocketAddr,
@@ -375,8 +343,8 @@ impl QuicMultiplexer {
     ) -> io::Result<QuicConnection> {
         let mut quic_config = make_quic_conn_config(
             &self.core_settings,
-            &tls_host_info.cert_chain_path,
-            &tls_host_info.private_key_path,
+            cert_chain_path,
+            key_path,
         )
             .map_err(|e| io::Error::new(
                 ErrorKind::Other, format!("Failed to create QUIC configuration: {}", e),
@@ -430,6 +398,7 @@ impl QuicMultiplexer {
                 id: self.id.extended(log_utils::IdItem::new(
                     SOCKET_ID_FMT, self.next_socket_id.fetch_add(1, Ordering::Relaxed),
                 )),
+                tls_connection_meta: conn.tls_connection_meta,
             },
             quic_conn,
         ))
@@ -446,22 +415,45 @@ impl QuicMultiplexer {
         log_id!(debug, self.id, "New connection: dcid={} scid={}",
             utils::hex_dump(&header.dcid), utils::hex_dump(&header.scid));
 
-        let quic_conn = {
+        let (quic_conn, tls_connection_meta) = {
             // Quiche modifies buffer in-place while processing packets, so copy the packet
             // in case we should retry as another host
             let mut retry_buffer = packet.to_vec();
 
+            // There is no API method to get SNI from the client hello before accepting
+            // the connection. So try accepting it with the first certificate and change
+            // the server certificate afterwards if needed.
+            let tls_host = self.core_settings.tunnel_tls_hosts.get(0).unwrap();
             // Reuse the source connection ID we sent in the Retry packet, instead of changing it again
             let quic_conn = self.accept_quic_connection(
-                &self.core_settings.tunnel_tls_host_info, &header.dcid, Some(&odcid), peer, packet,
+                &tls_host.cert_chain_path,
+                &tls_host.private_key_path,
+                &header.dcid,
+                Some(&odcid),
+                peer,
+                packet,
             )?;
 
-            match self.check_server_name(quic_conn.server_name())? {
-                ServerNameCheckStatus::Ok => quic_conn,
-                ServerNameCheckStatus::RetryAs(tls_host_info) => self.accept_quic_connection(
-                    tls_host_info, &header.dcid, Some(&odcid), peer, &mut retry_buffer,
-                )?,
-            }
+            let tls_connection_meta = self.tls_demux.select(
+                std::iter::once(tls_demultiplexer::Protocol::Http3.as_alpn().as_bytes()),
+                quic_conn.server_name().map(String::from).unwrap_or_default(),
+            ).map_err(|message| io::Error::new(ErrorKind::Other, message))?;
+
+            let quic_conn = if Some(tls_host.hostname.as_str()) == quic_conn.server_name() {
+                quic_conn
+            } else {
+                self.accept_quic_connection(
+                    &tls_connection_meta.cert_chain_path,
+                    &tls_connection_meta.key_path,
+                    &header.dcid,
+                    Some(&odcid),
+                    peer,
+                    &mut retry_buffer,
+                )?
+            };
+
+            log_id!(debug, self.id, "Connection meta: {:?}", tls_connection_meta);
+            (quic_conn, tls_connection_meta)
         };
 
         let is_established = quic_conn.is_established() || quic_conn.is_in_early_data();
@@ -469,6 +461,7 @@ impl QuicMultiplexer {
         let conn = HandshakingConnection {
             quic_conn: quic_conn.clone(),
             local_address: self.core_settings.listen_address,
+            tls_connection_meta,
         };
 
         if is_established {
@@ -573,12 +566,8 @@ impl QuicSocket {
         Ok(self.peer)
     }
 
-    pub fn server_name(&self) -> Option<String> {
-        self.quic_conn.lock().unwrap().server_name().map(String::from)
-    }
-
-    pub fn alpn(&self) -> Vec<u8> {
-        self.quic_conn.lock().unwrap().application_proto().into()
+    pub fn tls_connection_meta(&self) -> &tls_demultiplexer::ConnectionMeta {
+        &self.tls_connection_meta
     }
 
     pub fn send_response(&self, stream_id: u64, response: ResponseHeaders, fin: bool) -> io::Result<()> {
