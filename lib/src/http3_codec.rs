@@ -405,9 +405,9 @@ impl pipe::Sink for StreamSink {
             // a value between `net_utils::quic_data_frame_overhead(1)` and
             // `net_utils::quic_data_frame_overhead(orig_len)` this workaround helps us
             // not fall in a busy loop.
-            net_utils::quic_data_frame_overhead(orig_len)
+            net_utils::http3_data_frame_overhead(orig_len)
         } else {
-            net_utils::quic_data_frame_overhead(1)
+            net_utils::http3_data_frame_overhead(1)
         };
         Ok(data)
     }
@@ -440,7 +440,7 @@ impl pipe::Sink for StreamSink {
 impl http_codec::DroppingSink for StreamSink {
     fn write(&mut self, data: Bytes) -> io::Result<datagram_pipe::SendStatus> {
         match self.socket.stream_capacity(self.stream_id) {
-            Ok(n) if n >= net_utils::quic_data_frame_overhead(data.len()) + data.len() => (),
+            Ok(n) if n >= net_utils::http3_data_frame_overhead(data.len()) + data.len() => (),
             Ok(_) => return Ok(datagram_pipe::SendStatus::Dropped),
             Err(e) => return Err(io::Error::new(ErrorKind::Other, e.to_string())),
         }

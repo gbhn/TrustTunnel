@@ -72,10 +72,9 @@ impl<F: Fn(pipe::SimplexDirection, usize) + Send + Sync> LeftPipe<F> {
             let datagram_len = datagram.payload.len();
             match self.sink.write(datagram).await? {
                 datagram_pipe::SendStatus::Sent => {
-                    log_id!(debug, self.source.id(), "--> Datagram sent");
                     (self.shared.update_metrics)(self.direction, datagram_len);
                 },
-                datagram_pipe::SendStatus::Dropped => log_id!(debug, self.source.id(), "--> Datagram dropped"),
+                datagram_pipe::SendStatus::Dropped => log_id!(trace, self.source.id(), "--> Datagram dropped"),
             }
         }
     }
@@ -133,7 +132,7 @@ impl<F: Fn(pipe::SimplexDirection, usize) + Send + Sync> RightPipe<F> {
                 datagram_pipe::SendStatus::Sent => {
                     (self.shared.update_metrics)(self.direction, datagram_len);
                 },
-                datagram_pipe::SendStatus::Dropped => log_id!(debug, self.source.id(), "<-- Datagram dropped"),
+                datagram_pipe::SendStatus::Dropped => log_id!(trace, self.source.id(), "<-- Datagram dropped"),
             }
 
             let reversed = meta.reversed();

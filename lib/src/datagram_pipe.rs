@@ -122,10 +122,9 @@ impl<D: Datagram + Debug, F: Fn(pipe::SimplexDirection, usize) + Send> GenericSi
             let datagram_len = datagram.len();
             match self.sink.write(datagram).await? {
                 SendStatus::Sent => {
-                    log_id!(debug, self.source.id(), "{} Datagram sent", self.direction);
                     (self.update_metrics)(self.direction, datagram_len);
                 }
-                SendStatus::Dropped => log_id!(debug, self.source.id(), "{} Datagram dropped", self.direction),
+                SendStatus::Dropped => log_id!(trace, self.source.id(), "{} Datagram dropped", self.direction),
             }
         }
     }

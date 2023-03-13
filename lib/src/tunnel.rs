@@ -211,13 +211,12 @@ impl Tunnel {
             auth: forwarder_auth,
             user_agent: request.user_agent(),
         };
-        log_id!(trace, request_id, "Connecting to peer: {:?}", meta);
 
         let connector = forwarder.lock().unwrap().tcp_connector();
         let (fwd_rx, fwd_tx) =
             match tokio::time::timeout(
                 context.settings.tcp_connections_timeout,
-                connector.connect(request_id.clone(), meta),
+                connector.connect(request_id.clone(), meta.clone()),
             ).await
                 .unwrap_or(Err(ConnectionError::Timeout))
             {
@@ -225,7 +224,7 @@ impl Tunnel {
                 Err(e) => return Err((Some(request), "Connection to peer failed", e)),
             };
 
-        log_id!(trace, request_id, "Successfully connected to peer");
+        log_id!(debug, request_id, "Successfully connected to {:?}", meta);
         let (dstr_rx, dstr_tx) =
             match request.promote_to_next_state() {
                 Ok(x) => x,

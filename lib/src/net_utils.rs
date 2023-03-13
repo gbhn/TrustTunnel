@@ -27,16 +27,16 @@ pub(crate) const HTTP1_ALPN: &str = "http/1.1";
 pub(crate) const HTTP2_ALPN: &str = "h2";
 pub(crate) const HTTP3_ALPN: &str = "h3";
 
-pub(crate) const QUIC_DATA_FRAME_ID_WIRE_LENGTH: usize = varint_len(0);
+pub(crate) const HTTP3_DATA_FRAME_TYPE_WIRE_LENGTH: usize = varint_len(0);
 /// The minimum value of a stream capacity which allows to send a data chunk.
 /// Consists of 1 byte for frame ID, 1 byte for the shortest frame length, and
 /// 1 byte for the chunk itself.
-pub(crate) const MIN_USABLE_QUIC_STREAM_CAPACITY: usize = quic_data_frame_overhead(1) + 1;
+pub(crate) const MIN_USABLE_QUIC_STREAM_CAPACITY: usize = http3_data_frame_overhead(1) + 1;
 
 
 pub(crate) type HostnamePort = (String, u16);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum TcpDestination {
     Address(SocketAddr),
     HostName(HostnamePort),
@@ -83,8 +83,8 @@ pub(crate) const fn varint_len(x: usize) -> usize {
     }
 }
 
-pub(crate) const fn quic_data_frame_overhead(payload_size: usize) -> usize {
-    QUIC_DATA_FRAME_ID_WIRE_LENGTH + varint_len(payload_size)
+pub(crate) const fn http3_data_frame_overhead(payload_size: usize) -> usize {
+    HTTP3_DATA_FRAME_TYPE_WIRE_LENGTH + varint_len(payload_size)
 }
 
 pub(crate) fn get_fixed_size_ip(bytes: &mut Bytes) -> IpAddr {

@@ -30,7 +30,7 @@ pub(crate) struct IcmpDatagram {
     pub message: icmp_utils::Message,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct TcpConnectionMeta {
     /// Address of a VPN client made the connection request
     pub client_address: IpAddr,
