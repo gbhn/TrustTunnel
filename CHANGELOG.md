@@ -1,5 +1,7 @@
 # CHANGELOG
 
+* The executable now expects that the configuration files are TOML-formatted
+
 ## 0.9.38
 
 * Fixed enormous timeout of TCP connections establishment procedure.

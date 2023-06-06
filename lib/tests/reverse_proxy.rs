@@ -104,9 +104,11 @@ async fn path_h3_client(endpoint_address: &SocketAddr) -> (http::response::Parts
 async fn run_endpoint(endpoint_address: &SocketAddr, proxy_address: &SocketAddr) {
     let settings = Settings::builder()
         .listen_address(endpoint_address).unwrap()
-        .add_listen_protocol(ListenProtocolSettings::Http1(Http1Settings::builder().build()))
-        .add_listen_protocol(ListenProtocolSettings::Http2(Http2Settings::builder().build()))
-        .add_listen_protocol(ListenProtocolSettings::Quic(QuicSettings::builder().build()))
+        .listen_protocols(ListenProtocolSettings {
+            http1: Some(Http1Settings::builder().build()),
+            http2: Some(Http2Settings::builder().build()),
+            quic: Some(QuicSettings::builder().build()),
+        })
         .reverse_proxy(
             ReverseProxySettings::builder()
                 .server_address(proxy_address).unwrap()

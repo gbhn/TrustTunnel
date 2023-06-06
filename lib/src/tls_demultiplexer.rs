@@ -1,10 +1,11 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::io;
 use rustls::{Certificate, PrivateKey};
+use smallvec::SmallVec;
 use crate::{net_utils, settings, utils};
 use crate::net_utils::Channel;
-use crate::settings::{ListenProtocolSettings, Settings};
+use crate::settings::Settings;
 
 
 const DEFAULT_PROTOCOL: Protocol = Protocol::Http1;
@@ -75,7 +76,7 @@ pub(crate) struct TlsDemux {
     reverse_proxy_hosts: HashMap<String, Host>,
     ping_hosts: HashMap<String, Host>,
     speedtest_hosts: HashMap<String, Host>,
-    tunnel_protocols: Vec<Protocol>,
+    tunnel_protocols: SmallVec<[Protocol; 3]>,
 }
 
 impl Protocol {
@@ -144,15 +145,19 @@ impl TlsDemux {
                 None => Default::default(),
                 Some(_) => make_hosts!(tls_settings.reverse_proxy_hosts)?,
             },
-            tunnel_protocols: settings.listen_protocols.iter()
-                .map(|x| match x {
-                    ListenProtocolSettings::Http1(_) => Protocol::Http1,
-                    ListenProtocolSettings::Http2(_) => Protocol::Http2,
-                    ListenProtocolSettings::Quic(_) => Protocol::Http3,
-                })
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect(),
+            tunnel_protocols: {
+                let mut x = SmallVec::new();
+                if settings.listen_protocols.http1.is_some() {
+                    x.push(Protocol::Http1);
+                }
+                if settings.listen_protocols.http2.is_some() {
+                    x.push(Protocol::Http2);
+                }
+                if settings.listen_protocols.quic.is_some() {
+                    x.push(Protocol::Http3);
+                }
+                x
+            },
         })
     }
 
@@ -279,12 +284,12 @@ mod tests {
         }
     }
 
-    fn listen_protocol_settings_as_str(x: &ListenProtocolSettings) -> &'static str {
-        match x {
-            ListenProtocolSettings::Http1(_) => "HTTP1",
-            ListenProtocolSettings::Http2(_) => "HTTP2",
-            ListenProtocolSettings::Quic(_) => "QUIC",
-        }
+    fn listen_protocol_settings_as_str(x: &ListenProtocolSettings) -> String {
+        x.http1.iter().map(|_| "HTTP1")
+            .chain(x.http2.iter().map(|_| "HTTP2"))
+            .chain(x.quic.iter().map(|_| "QUIC"))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn make_tls_host(host: String) -> TlsHostInfo {
@@ -294,7 +299,7 @@ mod tests {
         }
     }
 
-    fn check_protocol_selection(listen_protocols: Vec<ListenProtocolSettings>, advertised_protocols: Vec<Protocol>)
+    fn check_protocol_selection(listen_protocols: ListenProtocolSettings, advertised_protocols: Vec<Protocol>)
                                 -> Result<ConnectionMeta, String>
     {
         const TEST_HOST: &str = "example.com";
@@ -312,64 +317,73 @@ mod tests {
     #[test]
     fn no_matching_tunnel_protocols() {
         struct Sample {
-            listen_protocols: Vec<ListenProtocolSettings>,
+            listen_protocols: ListenProtocolSettings,
             advertised_protocols: Vec<Protocol>,
         }
 
         let test_samples = vec![
             Sample {
-                listen_protocols: vec![],
+                listen_protocols: Default::default(),
                 advertised_protocols: vec![],
             },
             Sample {
-                listen_protocols: vec![],
+                listen_protocols: Default::default(),
                 advertised_protocols: vec![Protocol::Http1],
             },
             Sample {
-                listen_protocols: vec![ListenProtocolSettings::Http1(Http1Settings::builder().build())],
+                listen_protocols: ListenProtocolSettings {
+                    http1: Some(Http1Settings::builder().build()),
+                    ..Default::default()
+                },
                 advertised_protocols: vec![Protocol::Http2],
             },
             Sample {
-                listen_protocols: vec![ListenProtocolSettings::Http2(Http2Settings::builder().build())],
+                listen_protocols: ListenProtocolSettings {
+                    http2: Some(Http2Settings::builder().build()),
+                    ..Default::default()
+                },
                 advertised_protocols: vec![Protocol::Http1],
             },
             Sample {
-                listen_protocols: vec![
-                    ListenProtocolSettings::Http2(Http2Settings::builder().build()),
-                    ListenProtocolSettings::Quic(QuicSettings::builder().build()),
-                ],
+                listen_protocols: ListenProtocolSettings {
+                    http2: Some(Http2Settings::builder().build()),
+                    quic: Some(QuicSettings::builder().build()),
+                    ..Default::default()
+                },
                 advertised_protocols: vec![Protocol::Http1],
             },
         ];
 
         for sample in test_samples {
             check_protocol_selection(sample.listen_protocols.clone(), sample.advertised_protocols.clone())
-                .expect_err(&format!("{:?}", (sample.listen_protocols.iter().map(listen_protocol_settings_as_str).collect::<Vec<_>>(), sample.advertised_protocols)));
+                .expect_err(&format!("{:?}", (listen_protocol_settings_as_str(&sample.listen_protocols), sample.advertised_protocols)));
         }
     }
 
     #[test]
     fn tunnel_protocol_selection() {
         struct Sample {
-            listen_protocols: Vec<ListenProtocolSettings>,
+            listen_protocols: ListenProtocolSettings,
             advertised_protocols: Vec<Protocol>,
             expected_selection: Protocol,
         }
 
         let test_samples = vec![
             Sample {
-                listen_protocols: vec![
-                    ListenProtocolSettings::Http1(Http1Settings::builder().build()),
-                    ListenProtocolSettings::Http2(Http2Settings::builder().build()),
-                ],
+                listen_protocols: ListenProtocolSettings {
+                    http1: Some(Http1Settings::builder().build()),
+                    http2: Some(Http2Settings::builder().build()),
+                    ..Default::default()
+                },
                 advertised_protocols: vec![],
                 expected_selection: Protocol::Http1,
             },
             Sample {
-                listen_protocols: vec![
-                    ListenProtocolSettings::Http1(Http1Settings::builder().build()),
-                    ListenProtocolSettings::Http2(Http2Settings::builder().build()),
-                ],
+                listen_protocols: ListenProtocolSettings {
+                    http1: Some(Http1Settings::builder().build()),
+                    http2: Some(Http2Settings::builder().build()),
+                    ..Default::default()
+                },
                 advertised_protocols: vec![Protocol::Http1, Protocol::Http2],
                 expected_selection: Protocol::Http2,
             },
@@ -379,7 +393,7 @@ mod tests {
             let meta = check_protocol_selection(
                 sample.listen_protocols.clone(), sample.advertised_protocols.clone(),
             ).unwrap_or_else(|_| panic!(
-                "{:?}", (sample.listen_protocols.iter().map(listen_protocol_settings_as_str).collect::<Vec<_>>(), sample.advertised_protocols)
+                "{:?}", (listen_protocol_settings_as_str(&sample.listen_protocols), sample.advertised_protocols)
             ));
             assert_eq!(sample.expected_selection, meta.protocol);
         }

@@ -1,0 +1,55 @@
+# The TLS hosts for traffic tunneling and service requests handling.
+[[main_hosts]]
+# Used as a key for selecting a certificate chain in TLS handshake.
+# MUST be unique.
+hostname = "localhost"
+# Path to a file containing the certificate chain.
+# MUST remain valid until the endpoint is running or the next TLS hosts settings reload.
+cert_chain_path = "cert.pem"
+# Path to a file containing the private key.
+# May be equal to `cert_chain_path` if it contains both of them.
+# MUST remain valid until the endpoint is running or the next TLS hosts settings reload.
+private_key_path = "key.pem"
+
+[[main_hosts]]
+hostname = "tunnel.localhost"
+cert_chain_path = "cert.pem"
+private_key_path = "key.pem"
+
+# The TLS hosts for HTTPS pinging.
+# With this one set up the endpoint responds with `200 OK` to HTTPS `GET` requests
+# to the specified domains.
+[[ping_hosts]]
+hostname = "ping.localhost"
+cert_chain_path = "cert.pem"
+private_key_path = "key.pem"
+
+[[ping_hosts]]
+hostname = "ping2.localhost"
+cert_chain_path = "cert.pem"
+private_key_path = "key.pem"
+
+# The TLS hosts for speed testing.
+# With this one set up the endpoint accepts connections to the specified hosts and
+# handles HTTP requests in the following way:
+#     * `GET` requests with `/Nmb.bin` path (where `N` is 1 to 100, e.g. `/100mb.bin`)
+#       are considered as download speedtest transferring `N` megabytes to a client
+#     * `POST` requests with `/upload.html` path and `Content-Length: N`
+#       are considered as upload speedtest receiving `N` bytes from a client,
+#       where `N` is up to 120 * 1024 * 1024 bytes
+[[speedtest_hosts]]
+hostname = "speed.localhost"
+cert_chain_path = "cert.pem"
+private_key_path = "key.pem"
+
+[[speedtest_hosts]]
+hostname = "speed2.localhost"
+cert_chain_path = "cert.pem"
+private_key_path = "key.pem"
+
+# The TLS hosts for the connections must be forwarded to the reverse proxy.
+# Only makes sense if the reverse proxy is set up, otherwise it is ignored.
+[[reverse_proxy_hosts]]
+hostname = "hello.localhost"
+cert_chain_path = "cert.pem"
+private_key_path = "key.pem"

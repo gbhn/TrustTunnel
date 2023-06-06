@@ -55,7 +55,7 @@ WORKDIR /bench/$VPN_LIBS_DIR
 RUN patch -p1 < /bench/ssl_verify.patch && \
     cd build && \
     ninja standalone_client && \
-    mv ./core/standalone_client /bench/
+    mv ./standalone_client/standalone_client /bench/
 
 COPY entrypoint.sh /bench/
 

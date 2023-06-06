@@ -12,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::http_codec::{HttpCodec, RequestHeaders, ResponseHeaders};
 use crate::{datagram_pipe, http_codec, log_id, log_utils, net_utils, pipe};
 use crate::tls_demultiplexer::Protocol;
-use crate::settings::{ListenProtocolSettings, Settings};
+use crate::settings::Settings;
 
 
 pub(crate) struct Http2Codec<IO> {
@@ -64,13 +64,7 @@ impl<IO> Http2Codec<IO>
         transport_stream: IO,
         parent_id_chain: log_utils::IdChain<u64>,
     ) -> io::Result<Self> {
-        let http2_settings = core_settings.listen_protocols.iter()
-            .find(|x| matches!(x, ListenProtocolSettings::Http2(_)))
-            .map(|x| match x {
-                ListenProtocolSettings::Http2(x) => x,
-                _ => unreachable!(),
-            })
-            .unwrap();
+        let http2_settings = core_settings.listen_protocols.http2.as_ref().unwrap();
 
         let client_address = transport_stream.peer_addr()?.ip();
 

@@ -2,7 +2,7 @@
 
 ## Building
 
-Execute the following commands in Terminal:
+Execute the following commands in the Terminal:
 ```shell
 cargo build
 ```
@@ -14,7 +14,7 @@ to build the release version.
 
 ## Issuing self-signed cert and keys (RSA)
 
-Execute the following commands in Terminal:
+Execute the following commands in the Terminal:
 ```shell
 openssl req -config <openssl.conf> -new -x509 -sha256 -newkey rsa:2048 -nodes -days 1000 -keyout key.pem -out cert.pem
 ```
@@ -25,233 +25,21 @@ where
 
 ### Library configuration
 
-An endpoint can be configured using a couple of JSON files.
-For a detailed description of the features see [here](./lib/README.md#features-description).
-The very basic configuration file can be found in [the example](#example-endpoint).
-
-The full set of settings is shown bellow in the pseudo-json format:
-* the lines which start with `///` are comments
-* an item marked with `Default(x)` is set to `x` in case it is omitted
-* an item marked with `Optional` may be omitted, it will turn off the corresponding feature
-* an item marked with `Enum` may take one of the listed values; for example, authenticator may be
-  `"authenticator": { "file": { "path": "/creds.txt" } }` as well as
-  `"authenticator": { "radius": { "address": "127.0.0.1:1813" } }`
+An endpoint can be configured using a couple of TOML files.
 
 #### Settings
 
-The file struct reflects the library settings (`struct Settings` in [settings.rs](./lib/src/settings.rs)).
-
-```
-{
-  /// The address to listen on
-  "listen_address": Default("0.0.0.0:433"),
-  /// The reverse proxy settings.
-  /// With this one set up the endpoint does TLS termination on such connections and
-  /// translates HTTP/x traffic into HTTP/1.1 protocol towards the server and back
-  /// into original HTTP/x towards the client. Like this:
-  ///
-  /// ```(client) TLS(HTTP/x) <--(endpoint)--> (server) HTTP/1.1```
-  ///
-  /// The translated HTTP/1.1 requests have the custom header `X-Original-Protocol`
-  /// appended. For now, its value can be either `HTTP1`, or `HTTP3`.
-  /// TLS hosts for the reverse proxy channel are configured through the TLS hosts settings.
-  "reverse_proxy": Optional {
-    /// The origin server address
-    "server_address": "127.0.0.1:1111",
-    /// Connections to the main hosts with paths starting with this mask are routed
-    /// to the reverse proxy server. MUST start with slash.
-    "path_mask": "/proxy",
-    /// With this one set to `true` the endpoint overrides the HTTP method while
-    /// translating an HTTP3 request to HTTP1 in case the request has the `GET` method
-    /// and its path is `/`
-    "h3_backward_compatibility": Default(false)
-  },
-  /// IPv6 availability
-  "ipv6_available": Default(true),
-  /// Whether connections to private network of the endpoint are allowed
-  "allow_private_network_connections": Default(false),
-  /// Timeout of a TLS handshake
-  "tls_handshake_timeout_secs": Default(10),
-  /// Timeout of a client listener
-  "client_listener_timeout_secs": Default(600),
-  /// Timeout of connection establishment. For example, it is related to
-  /// client's connection requests.
-  connection_establishment_timeout_secs: Default(30),
-  /// Timeout of tunneled TCP connections
-  "tcp_connections_timeout_secs": Default(604800), /// 1 week
-  /// Timeout of tunneled UDP "connections"
-  "udp_connections_timeout_secs": Default(300),
-  /// The forwarder codec settings
-  "forward_protocol": Enum {
-    Default("direct": {}),
-    "socks5": {
-      "address": "127.0.0.1:1080",
-      /// Enable/disable extended authentication. 
-      /// See [here](lib/README.md#extended-authentication) for details.
-      "extended_auth": Default(false)
-    }
-  },
-  /// The list of listener codec settings
-  "listen_protocols": [
-    Enum {
-      "http1": {},
-      "http2": {
-        /// The initial window size (in octets) for connection-level flow control for received data
-        "initial_connection_window_size": Default(8 MB),
-        /// The initial window size (in octets) for stream-level flow control for received data
-        #[serde(default = "Http2Settings::default_initial_stream_window_size")]
-        "initial_stream_window_size": Default(128 KB),
-        /// The number of streams that the sender permits the receiver to create
-        "max_concurrent_streams": Default(1000),
-        /// The size (in octets) of the largest HTTP/2 frame payload that we are able to accept
-        "max_frame_size": Default(16 KB),
-        /// The max size of received header frames
-        "header_table_size": Default(64 K)
-      },
-      "quic": {
-        /// The size of UDP payloads that the endpoint is willing to receive. UDP datagrams with
-        /// payloads larger than this limit are not likely to be processed.
-        "recv_udp_payload_size": Default(1350),
-        /// The size of UDP payloads that the endpoint is willing to send
-        "send_udp_payload_size": Default(1350),
-        /// The initial value for the maximum amount of data that can be sent on the connection
-        "initial_max_data": Default(100 MB),
-        /// The initial flow control limit for locally initiated bidirectional streams
-        "max_stream_data_bidi_local": Default(1 MB),
-        /// The initial flow control limit for peer-initiated bidirectional streams
-        "max_stream_data_bidi_remote": Default(1 MB),
-        /// The initial flow control limit for unidirectional streams
-        "max_stream_data_uni": Default(1 MB),
-        /// The initial maximum number of bidirectional streams the endpoint that receives this
-        /// transport parameter is permitted to initiate
-        "max_streams_bidi": Default(4K),
-        /// The initial maximum number of unidirectional streams the endpoint that receives this
-        /// transport parameter is permitted to initiate
-        "max_streams_uni": Default(4K),
-        /// The maximum size of the connection window
-        "max_connection_window": Default(24 MB),
-        /// The maximum size of the stream window
-        "max_stream_window": Default(16 MB),
-        /// Disable active connection migration on the address being used during the handshake
-        "disable_active_migration": Default(true),
-        /// Enable sending or receiving early data
-        "enable_early_data": Default(true),
-        /// The capacity of the QUIC multiplexer message queue.
-        /// Decreasing it may cause packet dropping in case the multiplexer cannot keep up the pace.
-        /// Increasing it may lead to high memory consumption.
-        "message_queue_capacity": Default(4K)
-      }
-    },
-    ...
-  ],
-  /// The client authenticator.
-  /// If this one is omitted and `forward_protocol` is set to `socks5`,
-  /// the endpoint will try to authenticate requests using the SOCKS5 authentication protocol.
-  "authenticator": Optional {
-    Enum {
-      "file": {
-        "path": "auth_info.txt"
-      },
-      "radius": {
-        /// The RADIUS server address
-        "server_address": "127.0.0.1:1813",
-        /// Timeout of the authentication procedure
-        "timeout_secs": Default(3),
-        /// The password shared between the client and the RADIUS server
-        "secret": "String",
-        /// The authentication cache capacity
-        #[serde(default = "RadiusAuthenticatorSettings::default_cache_size")]
-        "cache_size": Default(1024),
-        /// The authentication cache entry TTL
-        "cache_ttl_secs": Default(10)
-      }
-    }
-  },
-  /// The ICMP forwarding settings.
-  /// Setting up this feature requires superuser rights on some systems.
-  "icmp": Optional {
-    /// The name of an interface to bind the ICMP socket to
-    "interface_name": "eth0",
-    /// Timeout of tunneled ICMP requests
-    "request_timeout_secs": Default(3),
-    /// The capacity of the ICMP multiplexer received messages queue.
-    /// Decreasing it may cause packet dropping in case the multiplexer cannot keep up the pace.
-    /// Increasing it may lead to high memory consumption.
-    /// Each client has its own queue.
-    "recv_message_queue_capacity": Default(256)
-  },
-  /// The metrics handling settings
-  "metrics": Optional {
-    /// The address to listen on for settings export requests
-    "address": Default("0.0.0.0:1987"),
-    /// Timeout of a metrics request
-    "request_timeout_secs": Default(3)
-  }
-}
-```
+The example file with the full set of available options and their descriptions
+can be found [here](./examples/my_vpn/vpn.toml).
+The file structure reflects the library settings (`struct Settings` in [settings.rs](./lib/src/settings.rs)).
 
 #### TlsHostsSettings
 
-The file struct reflects the library settings (`struct TlsHostsSettings` in [settings.rs](./lib/src/settings.rs)).
+The example file with the full set of available options and their descriptions
+can be found [here](./examples/my_vpn/tls_hosts.toml).
+The file structure reflects the TLS hosts library settings
+(`struct TlsHostsSettings` in [settings.rs](./lib/src/settings.rs)).
 These settings may be reloaded dynamically (see [here](#dynamic-reloading-of-tls-hosts-settings) for details).
-
-```
-{
-  /// The TLS hosts for traffic tunneling and service requests handling
-  "main_hosts": [
-    {
-      /// Used as a key for selecting a certificate chain in TLS handshake.
-      /// MUST be unique.
-      "hostname": "localhost",
-      /// Path to a file containing the certificate chain.
-      /// MUST remain valid until the endpoint is running or the next TLS hosts settings reload.
-      "cert_chain_path": "cert.pem",
-      /// Path to a file containing the private key.
-      /// May be equal to `cert_chain_path` if it contains both of them.
-      /// MUST remain valid until the endpoint is running or the next TLS hosts settings reload.
-      "private_key_path": "key.pem"
-    },
-    ...
-  ],
-  /// The TLS hosts for HTTPS pinging.
-  /// With this one set up the endpoint responds with `200 OK` to HTTPS `GET` requests
-  /// to the specified domains.
-  "ping_hosts": [
-    {
-      "hostname": "ping.localhost",
-      "cert_chain_path": "cert.pem",
-      "private_key_path": "key.pem"
-    },
-    ...
-  ],
-  /// The TLS hosts for speed testing.
-  /// With this one set up the endpoint accepts connections to the specified hosts and
-  /// handles HTTP requests in the following way:
-  ///     * `GET` requests with `/Nmb.bin` path (where `N` is 1 to 100, e.g. `/100mb.bin`)
-  ///       are considered as download speedtest transferring `N` megabytes to a client
-  ///     * `POST` requests with `/upload.html` path and `Content-Length: N`
-  ///       are considered as upload speedtest receiving `N` bytes from a client,
-  ///       where `N` is up to 120 * 1024 * 1024 bytes
-  "speedtest_hosts": [
-    {
-      "hostname": "speed.localhost",
-      "cert_chain_path": "cert.pem",
-      "private_key_path": "key.pem"
-    },
-    ...
-  ],
-  /// The TLS hosts for the connections must be forwarded to the reverse proxy. 
-  /// Only makes sense if the reverse proxy is set up, otherwise it is ignored.
-  "reverse_proxy_hosts": [
-    {
-      "hostname": "reverse.proxy.localhost",
-      "cert_chain_path": "cert.pem",
-      "private_key_path": "key.pem"
-    },
-    ...
-  ]
-}
-```
 
 ### Executable features
 
@@ -266,7 +54,7 @@ line arguments. For example:
 * Logging file is configured by `--log_file <path>`. If not specified, the instance logs
   to `stdout`.
 
-To see the full set of available options, execute the following commands in Terminal:
+To see the full set of available options, execute the following commands in the Terminal:
 ```shell
 <path/to/target>/vpn_endpoint -h
 ```
@@ -282,12 +70,12 @@ the next reloading.
 
 ## Running
 
-To run the binary through `cargo`, execute the following commands in Terminal:
+To run the binary through `cargo`, execute the following commands in the Terminal:
 ```shell
 cargo run --bin vpn_endpoint -- <path/to/vpn.config> <path/to/tls_hosts.config>
 ```
 
-To run the binary directly, execute the following commands in Terminal:
+To run the binary directly, execute the following commands in the Terminal:
 ```shell
 <path/to/target>/vpn_endpoint <path/to/vpn.config> <path/to/tls_hosts.config>
 ```
@@ -296,9 +84,9 @@ where `<path/to/target>` is determined by the build command (by default it is `.
 
 ## Example endpoint
 
-For a quic setup you can run the example endpoint (see [here](./examples/my_vpn)).
+For a quic setup, you can run the example endpoint (see [here](./examples/my_vpn)).
 It shows the essential things needed to run an instance.
-To start one run the following commands in Terminal:
+To start one, run the following commands in the Terminal:
 ```shell
 cd ./examples/my_vpn && ./run.sh
 ```

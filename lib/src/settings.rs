@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::fmt::Formatter;
+use std::fmt::{Debug, Formatter};
 use std::io;
 use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs};
@@ -16,10 +16,9 @@ use crate::utils;
 
 pub type Socks5BuilderResult<T> = Result<T, Socks5Error>;
 
-#[derive(Debug)]
 pub enum ValidationError {
-    /// Invalid [`Settings.listen_address`]
-    ListenAddress(String),
+    /// [`Settings.listen_address`] is not set
+    ListenAddressNotSet,
     /// Invalid [`TlsHostsSettings.main_hosts`]
     MainTlsHostInfo(String),
     /// Invalid [`TlsHostsSettings.ping_hosts`]
@@ -28,14 +27,34 @@ pub enum ValidationError {
     SpeedTlsHostInfo(String),
     /// Invalid [`Settings.reverse_proxy`]
     ReverseProxy(String),
-    /// [`Settings.listen_protocols`] are not set
-    ListenProtocols,
+    /// Invalid [`Settings.listen_protocols`]
+    ListenProtocols(String),
 }
 
-#[derive(Debug)]
+impl Debug for ValidationError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ListenAddressNotSet => write!(f, "Listen address is not set"),
+            Self::MainTlsHostInfo(x) => write!(f, "Invalid main TLS hosts: {}", x),
+            Self::PingTlsHostInfo(x) => write!(f, "Invalid ping TLS hosts: {}", x),
+            Self::SpeedTlsHostInfo(x) => write!(f, "Invalid speedtest TLS hosts: {}", x),
+            Self::ReverseProxy(x) => write!(f, "Invalid reverse proxy settings: {}", x),
+            Self::ListenProtocols(x) => write!(f, "Invalid listen protocols settings: {}", x),
+        }
+    }
+}
+
 pub enum Socks5Error {
-    /// Invalid [`Socks5ForwarderSettings.address`]
-    Address(String),
+    /// [`Socks5ForwarderSettings.address`] is not set
+    AddressNotSet,
+}
+
+impl Debug for Socks5Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AddressNotSet => write!(f, "Server address is not set"),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -80,9 +99,8 @@ pub struct Settings {
     /// The forwarder codec settings
     #[serde(default)]
     pub(crate) forward_protocol: ForwardProtocolSettings,
-    /// The list of listener codec settings
-    #[serde(deserialize_with = "deserialize_protocols")]
-    pub(crate) listen_protocols: Vec<ListenProtocolSettings>,
+    /// The listener codec settings
+    pub(crate) listen_protocols: ListenProtocolSettings,
     /// The client authenticator.
     /// If this one is set to [`None`] and
     /// [forward_protocol](Settings.forward_protocol) is set to [SOCKS5](ForwardProtocolSettings::Socks5),
@@ -184,12 +202,17 @@ pub struct Socks5ForwarderSettingsBuilder {
     settings: Socks5ForwarderSettings,
 }
 
-#[derive(Deserialize, Clone)]
-#[serde(rename_all = "snake_case")]
-pub enum ListenProtocolSettings {
-    Http1(Http1Settings),
-    Http2(Http2Settings),
-    Quic(QuicSettings),
+#[derive(Clone, Default, Deserialize)]
+pub struct ListenProtocolSettings {
+    /// HTTP/1.1 listener settings
+    #[serde(default)]
+    pub http1: Option<Http1Settings>,
+    /// HTTP/2 listener settings
+    #[serde(default)]
+    pub http2: Option<Http2Settings>,
+    #[serde(default)]
+    /// QUIC / HTTP/3 listener settings
+    pub quic: Option<QuicSettings>,
 }
 
 #[derive(Deserialize)]
@@ -381,13 +404,16 @@ impl Settings {
 
     pub(crate) fn validate(&self) -> Result<(), ValidationError> {
         if self.listen_address.ip().is_unspecified() && self.listen_address.port() == 0 {
-            return Err(ValidationError::ListenAddress("Not set".to_string()));
+            return Err(ValidationError::ListenAddressNotSet);
         }
 
         self.reverse_proxy.as_ref().map(ReverseProxySettings::validate).transpose()?;
 
-        if self.listen_protocols.is_empty() {
-            return Err(ValidationError::ListenProtocols);
+        if self.listen_protocols.http1.is_none()
+            && self.listen_protocols.http2.is_none()
+            && self.listen_protocols.quic.is_none()
+        {
+            return Err(ValidationError::ListenProtocols("Not set".into()));
         }
 
         Ok(())
@@ -434,17 +460,17 @@ impl Default for Settings {
             reverse_proxy: None,
             ipv6_available: false,
             allow_private_network_connections: true,
-            tls_handshake_timeout: Default::default(),
-            client_listener_timeout: Default::default(),
-            connection_establishment_timeout: Default::default(),
-            tcp_connections_timeout: Default::default(),
-            udp_connections_timeout: Default::default(),
+            tls_handshake_timeout: Settings::default_tls_handshake_timeout(),
+            client_listener_timeout: Settings::default_client_listener_timeout(),
+            connection_establishment_timeout: Settings::default_connection_establishment_timeout(),
+            tcp_connections_timeout: Settings::default_tcp_connections_timeout(),
+            udp_connections_timeout: Settings::default_udp_connections_timeout(),
             forward_protocol: Default::default(),
-            listen_protocols: vec![
-                ListenProtocolSettings::Http1(Http1Settings::builder().build()),
-                ListenProtocolSettings::Http2(Http2Settings::builder().build()),
-                ListenProtocolSettings::Quic(QuicSettings::builder().build()),
-            ],
+            listen_protocols: ListenProtocolSettings {
+                http1: Some(Http1Settings::builder().build()),
+                http2: Some(Http2Settings::builder().build()),
+                quic: Some(QuicSettings::builder().build()),
+            },
             authenticator: None,
             icmp: None,
             metrics: Default::default(),
@@ -690,7 +716,7 @@ impl SettingsBuilder {
                 tcp_connections_timeout: Settings::default_tcp_connections_timeout(),
                 udp_connections_timeout: Settings::default_udp_connections_timeout(),
                 forward_protocol: Default::default(),
-                listen_protocols: vec![],
+                listen_protocols: Default::default(),
                 authenticator: None,
                 icmp: None,
                 metrics: Default::default(),
@@ -772,9 +798,9 @@ impl SettingsBuilder {
         self
     }
 
-    /// Add the listener codec settings
-    pub fn add_listen_protocol(mut self, settings: ListenProtocolSettings) -> Self {
-        self.settings.listen_protocols.push(settings);
+    /// Set the listener codec settings
+    pub fn listen_protocols(mut self, settings: ListenProtocolSettings) -> Self {
+        self.settings.listen_protocols = settings;
         self
     }
 
@@ -859,7 +885,7 @@ impl Socks5ForwarderSettingsBuilder {
     /// Finalize [`Socks5ForwarderSettings`]
     pub fn build(self) -> Socks5BuilderResult<Socks5ForwarderSettings> {
         if self.settings.address.ip().is_unspecified() {
-            return Err(Socks5Error::Address("Not set".to_string()));
+            return Err(Socks5Error::AddressNotSet);
         }
 
         Ok(self.settings)
@@ -1231,46 +1257,18 @@ fn deserialize_duration_secs<'de, D>(deserializer: D) -> Result<Duration, D::Err
             write!(formatter, "an unsigned integer")
         }
 
-        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> where E: serde::de::Error {
-            Ok(v)
+        // toml parser library converts unsigned integers to signed
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> where E: serde::de::Error {
+            (v >= 0).then_some(v as u64)
+                .ok_or_else(|| E::invalid_type(
+                    serde::de::Unexpected::Signed(v),
+                    &Visitor {},
+                ))
         }
     }
 
-    let path = deserializer.deserialize_u64(Visitor)?;
-    Ok(Duration::from_secs(path))
-}
-
-fn deserialize_protocols<'de, D>(deserializer: D) -> Result<Vec<ListenProtocolSettings>, D::Error>
-    where
-        D: serde::de::Deserializer<'de>,
-{
-    struct Visitor;
-
-    impl<'de> serde::de::Visitor<'de> for Visitor {
-        type Value = Vec<ListenProtocolSettings>;
-
-        fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
-            write!(formatter, "a non-empty list of protocol settings")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-        {
-            let mut out = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-            while let Some(x) = seq.next_element()? {
-                out.push(x);
-            }
-
-            if !out.is_empty() {
-                Ok(out)
-            } else {
-                Err(serde::de::Error::invalid_length(0, &Visitor {}))
-            }
-        }
-    }
-
-    deserializer.deserialize_seq(Visitor)
+    let x = deserializer.deserialize_u64(Visitor)?;
+    Ok(Duration::from_secs(x))
 }
 
 fn deserialize_file_path<'de, D>(deserializer: D) -> Result<String, D::Error>

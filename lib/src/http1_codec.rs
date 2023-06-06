@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, Notify};
-use crate::{datagram_pipe, http_codec, log_id, log_utils, net_utils, pipe, settings, utils};
+use crate::{datagram_pipe, http_codec, log_id, log_utils, net_utils, pipe, utils};
 use crate::tls_demultiplexer::Protocol;
 use crate::http_codec::{RequestHeaders, ResponseHeaders};
 use crate::pipe::Sink;
@@ -104,13 +104,7 @@ impl<IO> Http1Codec<IO>
             download_eof: Arc::new(Notify::new()),
             upload_rx: Some(upload_rx),
             upload_tx,
-            upload_buffer_size: core_settings.listen_protocols.iter()
-                .find(|x| matches!(x, settings::ListenProtocolSettings::Http1(_)))
-                .map(|x| match x {
-                    settings::ListenProtocolSettings::Http1(x) => x,
-                    _ => unreachable!(),
-                })
-                .unwrap()
+            upload_buffer_size: core_settings.listen_protocols.http1.as_ref().unwrap()
                 .upload_buffer_size,
             parent_id_chain,
             next_request_id: 0..,

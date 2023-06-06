@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use crate::{log_id, log_utils, net_utils, tls_demultiplexer, utils};
 use crate::http_codec::{RequestHeaders, ResponseHeaders};
-use crate::settings::{ListenProtocolSettings, Settings};
+use crate::settings::Settings;
 use crate::tls_demultiplexer::TlsDemux;
 use crate::utils::Either;
 
@@ -128,13 +128,7 @@ impl QuicMultiplexer {
         tls_demux: Arc<std::sync::RwLock<TlsDemux>>,
         next_socket_id: Arc<AtomicU64>,
     ) -> Self {
-        let queue_cap = core_settings.listen_protocols.iter()
-            .find_map(|x| match x {
-                ListenProtocolSettings::Quic(x) => Some(x.message_queue_capacity),
-                _ => None,
-            })
-            .unwrap();
-
+        let queue_cap = core_settings.listen_protocols.quic.as_ref().unwrap().message_queue_capacity;
         let (tx, rx) = mpsc::channel(queue_cap);
 
         Self {
@@ -943,9 +937,7 @@ fn quic_recv(
 fn make_quic_conn_config(
     core_settings: &Settings, cert_chain_file: &str, priv_key_file: &str,
 ) -> io::Result<quiche::Config> {
-    let quic_settings = core_settings.listen_protocols.iter()
-        .find_map(|x| if let ListenProtocolSettings::Quic(x) = x { Some(x) } else { None })
-        .unwrap();
+    let quic_settings = core_settings.listen_protocols.quic.as_ref().unwrap();
 
     let mut cfg = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
     cfg.load_cert_chain_from_pem_file(cert_chain_file).unwrap();

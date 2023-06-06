@@ -17,7 +17,7 @@ use crate::http_downstream::HttpDownstream;
 use crate::icmp_forwarder::IcmpForwarder;
 use crate::metrics::Metrics;
 use crate::quic_multiplexer::{QuicMultiplexer, QuicSocket};
-use crate::settings::{ForwardProtocolSettings, ListenProtocolSettings, Settings};
+use crate::settings::{ForwardProtocolSettings, Settings};
 use crate::shutdown::Shutdown;
 use crate::socks5_forwarder::Socks5Forwarder;
 use crate::tls_listener::{TlsAcceptor, TlsListener};
@@ -151,11 +151,8 @@ impl Core {
 
     async fn listen_tcp(&self) -> io::Result<()> {
         let settings = self.context.settings.clone();
-        let has_tcp_based_codec = settings.listen_protocols.iter()
-            .any(|x| match x {
-                ListenProtocolSettings::Http1(_) | ListenProtocolSettings::Http2(_) => true,
-                ListenProtocolSettings::Quic(_) => false,
-            });
+        let has_tcp_based_codec = settings.listen_protocols.http1.is_some()
+            || settings.listen_protocols.http2.is_some();
 
         let tcp_listener = TcpListener::bind(settings.listen_address).await?;
         info!("Listening to TCP {}", settings.listen_address);
@@ -207,12 +204,7 @@ impl Core {
 
     async fn listen_udp(&self) -> io::Result<()> {
         let settings = self.context.settings.clone();
-        if !settings.listen_protocols.iter()
-            .any(|x| match x {
-                ListenProtocolSettings::Http1(_) | ListenProtocolSettings::Http2(_) => false,
-                ListenProtocolSettings::Quic(_) => true,
-            })
-        {
+        if settings.listen_protocols.quic.is_none() {
             return Ok(());
         }
 

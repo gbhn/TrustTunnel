@@ -181,9 +181,11 @@ tBkmxjMw8cFLCP9o7W7QSb9XIqfCyg4dX4Fl9l1fDNX/xK2c3dlDJv6Spi1IMdFY
 pub async fn run_endpoint(listen_address: &SocketAddr) {
     let settings = Settings::builder()
         .listen_address(listen_address).unwrap()
-        .add_listen_protocol(ListenProtocolSettings::Http1(Http1Settings::builder().build()))
-        .add_listen_protocol(ListenProtocolSettings::Http2(Http2Settings::builder().build()))
-        .add_listen_protocol(ListenProtocolSettings::Quic(QuicSettings::builder().build()))
+        .listen_protocols(ListenProtocolSettings {
+            http1: Some(Http1Settings::builder().build()),
+            http2: Some(Http2Settings::builder().build()),
+            quic: Some(QuicSettings::builder().build()),
+        })
         .allow_private_network_connections(true)
         .build().unwrap();
 

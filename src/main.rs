@@ -1,5 +1,3 @@
-use std::fs::File;
-use std::io::BufReader;
 use std::sync::Arc;
 use log::{error, info, LevelFilter};
 use tokio::signal;
@@ -97,14 +95,15 @@ fn main() {
     });
 
     let settings_path = args.get_one::<String>(SETTINGS_PARAM_NAME).unwrap();
-    let settings: Settings = serde_json::from_reader(BufReader::new(
-        File::open(settings_path).expect("Couldn't open the settings file")
-    )).expect("Couldn't parse the settings file");
+    let settings: Settings = toml::from_str(
+        &std::fs::read_to_string(settings_path).expect("Couldn't read the settings file")
+    ).expect("Couldn't parse the settings file");
 
     let tls_hosts_settings_path = args.get_one::<String>(TLS_HOSTS_SETTINGS_PARAM_NAME).unwrap();
-    let tls_hosts_settings: settings::TlsHostsSettings = serde_json::from_reader(BufReader::new(
-        File::open(tls_hosts_settings_path).expect("Couldn't open the TLS hosts settings file")
-    )).expect("Couldn't parse the TLS hosts settings file");
+    let tls_hosts_settings: settings::TlsHostsSettings = toml::from_str(
+        &std::fs::read_to_string(tls_hosts_settings_path)
+            .expect("Couldn't read the TLS hosts settings file")
+    ).expect("Couldn't parse the TLS hosts settings file");
 
     let rt = {
         let mut builder = tokio::runtime::Builder::new_multi_thread();
@@ -141,9 +140,10 @@ fn main() {
                 sighup_listener.recv().await;
                 info!("Reloading TLS hosts settings");
 
-                let tls_hosts_settings: settings::TlsHostsSettings = serde_json::from_reader(BufReader::new(
-                    File::open(&tls_hosts_settings_path).expect("Couldn't open the TLS hosts settings file")
-                )).expect("Couldn't parse the TLS hosts settings file");
+                let tls_hosts_settings: settings::TlsHostsSettings = toml::from_str(
+                    &std::fs::read_to_string(&tls_hosts_settings_path)
+                        .expect("Couldn't read the TLS hosts settings file")
+                ).expect("Couldn't parse the TLS hosts settings file");
 
                 core.reload_tls_hosts_settings(tls_hosts_settings).expect("Couldn't apply new settings");
                 info!("TLS hosts settings are successfully reloaded");

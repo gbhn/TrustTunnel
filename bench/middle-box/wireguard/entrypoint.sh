@@ -29,10 +29,6 @@ on_exit() {
   wg show
 }
 
-if ${USERSPACE:=false}; then
-  unset WG_QUICK_USERSPACE_IMPLEMENTATION
-fi
-
 wg-quick up "./$IFACE.conf"
 
 trap on_exit EXIT TERM INT

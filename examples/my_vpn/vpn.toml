@@ -1,0 +1,210 @@
+# (Required) The address to listen on.
+listen_address = "[::]:4433"
+
+# Whether IPv6 connections can be routed or rejected with unreachable status.
+# Default is true.
+ipv6_available = true
+
+# Whether connections to private network of the endpoint are allowed.
+# Default is false.
+allow_private_network_connections = false
+
+# Timeout of a TLS handshake in seconds.
+# Default is 10s.
+tls_handshake_timeout_secs = 10
+
+# Timeout of a client listener in seconds.
+# Default is 600s.
+client_listener_timeout_secs = 600
+
+# Timeout of connection establishment in seconds. For example, it is related to
+# client's connection requests.
+# Default is 30s.
+connection_establishment_timeout_secs = 30
+
+# Idle timeout of tunneled TCP connections in seconds.
+# Default is 604800s (1 week).
+tcp_connections_timeout_secs = 604800
+
+# Timeout of tunneled UDP "connections" in seconds.
+# Default is 300s.
+udp_connections_timeout_secs = 300
+
+# (Required) The set of connection forwarder settings.
+# Possible values:
+#   * direct: a direct forwarder routes a connection directly to its target host,
+#   * socks5: a SOCKS5 forwarder routes a connection though a SOCKS5 proxy.
+# Default is direct
+#[forward_protocol]
+
+# The set of direct forwarder settings.
+[forward_protocol.direct]
+
+# The set of SOCKS5 forwarder settings.
+#[forward_protocol.socks5]
+## (Required) The address of the SOCKS5 server.
+#address = "127.0.0.1:1080"
+## Enable/disable extended authentication.
+## See lib/README.md#extended-authentication for details.
+## Disabled by default.
+#extended_auth = false
+
+# The list of enabled client listener codecs.
+# Possible values:
+#   * http1: enables HTTP1 codec,
+#   * http2: enables HTTP2 codec,
+#   * quic: enables QUIC/HTTP3 codec.
+# At least one listener codec MUST be specified.
+[listen_protocols]
+# The set of HTTP1 listener codec settings.
+[listen_protocols.http1]
+# Buffer size for outgoing traffic.
+# Default is 32K.
+upload_buffer_size = 32768
+
+# The set of HTTP2 listener codec settings.
+[listen_protocols.http2]
+# The initial window size (in octets) for connection-level flow control for received data.
+# Default is 8M.
+initial_connection_window_size = 8_388_608
+# The initial window size (in octets) for stream-level flow control for received data.
+# Default is 128K.
+initial_stream_window_size = 131072
+# The number of streams that the sender permits the receiver to create.
+# Default is 1000.
+max_concurrent_streams = 1000
+# The size (in octets) of the largest HTTP/2 frame payload that we are able to accept.
+# Default is 16K.
+max_frame_size = 16384
+# The max size of received header frames.
+# Default is 64K.
+header_table_size = 65536
+
+# The set of QUIC listener codec settings.
+[listen_protocols.quic]
+# The size of UDP payloads that the endpoint is willing to receive. UDP datagrams with
+# payloads larger than this limit are not likely to be processed.
+# Default is 1350.
+recv_udp_payload_size = 1350
+# The size of UDP payloads that the endpoint is willing to send.
+# Default is 1350.
+send_udp_payload_size = 1350
+# The initial value for the maximum amount of data that can be sent on the connection.
+# Default is 100M.
+initial_max_data = 104_857_600
+# The initial flow control limit for locally initiated bidirectional streams.
+# Default is 1M.
+max_stream_data_bidi_local = 1_048_576
+# The initial flow control limit for peer-initiated bidirectional streams.
+# Default is 1M.
+max_stream_data_bidi_remote = 1_048_576
+# The initial flow control limit for unidirectional streams.
+# Default is 1M.
+max_stream_data_uni = 1_048_576
+# The initial maximum number of bidirectional streams the endpoint that receives this
+# transport parameter is permitted to initiate.
+# Default is 4K.
+max_streams_bidi = 4096
+# The initial maximum number of unidirectional streams the endpoint that receives this
+# transport parameter is permitted to initiate.
+# Default is 4K.
+max_streams_uni = 4096
+# The maximum size of the connection window.
+# Default is 24M.
+max_connection_window = 25_165_824
+# The maximum size of the stream window.
+# Default is 16M.
+max_stream_window = 16_777_216
+# Whether the active connection migration is enabled on the address being used
+# during the handshake.
+# Disabled by default.
+disable_active_migration = true
+# Whether sending or receiving early data is enabled.
+# Enabled by default.
+enable_early_data = true
+# The capacity of the QUIC multiplexer message queue.
+# Decreasing it may cause packet dropping in case the multiplexer cannot keep up the pace.
+# Increasing it may lead to high memory consumption.
+# Default is 4K.
+message_queue_capacity = 4096
+
+# (Optional) The client authenticator.
+# Possible values:
+#   * <none>: any client is welcome,
+#   * file: use a file with credentials for authentication,
+#   * radius: ask a radius server for authentication.
+# Default is <none>.
+# If this one is omitted and `forward_protocol` is set to `socks5`,
+# the endpoint will try to authenticate requests using the SOCKS5 authentication protocol.
+#[authenticator]
+
+# The set of file-based authenticator settings.
+#[authenticator.file]
+## (Required) Path to the credentials file.
+## The file must contain an application id (`applicationId: <string>`),
+## token (`token: <string>`), and credentials (`credentials: <string>`).
+## Each one must be on a new line. The order does not matter.
+#path = "auth_info.txt"
+
+# The set of RADIUS authenticator settings.
+#[authenticator.radius]
+## (Required) The RADIUS server address.
+#server_address = "127.0.0.1:1813"
+## Timeout of the authentication procedure in seconds.
+## Default is 3s.
+#timeout_secs = 3
+## (Required) The password shared between the client and the RADIUS server.
+#secret = "String"
+## The authentication cache capacity.
+## Default is 1024.
+#cache_size = 1024
+## The authentication cache entry TTL in seconds.
+## Default is 10s.
+#cache_ttl_secs = 10
+
+# (Optional) The reverse proxy settings.
+# With this one set up the endpoint does TLS termination on matching connections and
+# translates HTTP/x traffic into HTTP/1.1 protocol towards the server and back
+# into original HTTP/x towards the client. Like this:
+#
+# ```(client) TLS(HTTP/x) <--(endpoint)--> (server) HTTP/1.1```
+#
+# The translated HTTP/1.1 requests have the custom header `X-Original-Protocol`
+# appended. For now, its value can be either `HTTP1`, or `HTTP3`.
+# TLS hosts for the reverse proxy channel are configured through the TLS hosts settings.
+[reverse_proxy]
+# (Required) The origin server address.
+server_address = "127.0.0.1:1111"
+# Connections to the main hosts with paths starting with this mask are routed
+# to the reverse proxy server.
+# MUST not be empty and start with slash.
+path_mask = "/proxy"
+# With this one set to `true` the endpoint overrides the HTTP method while
+# translating an HTTP3 request to HTTP1 in case the request has the `GET` method
+# and its path is `/`
+# Disabled by default.
+h3_backward_compatibility = false
+
+# (Optional) The ICMP forwarding settings.
+# Setting up this feature requires superuser rights on some systems.
+[icmp]
+# (Required) The name of a network interface to bind the outbound ICMP socket to.
+interface_name = "en0"
+# Timeout of tunneled ICMP requests in seconds.
+# Default is 3s.
+request_timeout_secs = 3
+# The capacity of the ICMP multiplexer received messages queue.
+# Decreasing it may cause packet dropping in case the multiplexer cannot keep up the pace.
+# Increasing it may lead to high memory consumption.
+# Each client has its own queue.
+# Default is 256.
+recv_message_queue_capacity = 256
+
+# (Optional) The metrics gathering request handler settings.
+[metrics]
+# The address to listen on for settings export requests.
+# Default is 0.0.0.0:1987.
+address = "0.0.0.0:1987"
+# Timeout of a metrics request in seconds.
+# Default is 3s.
+request_timeout_secs = 3

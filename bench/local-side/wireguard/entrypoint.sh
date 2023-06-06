@@ -4,7 +4,6 @@ set -e -x
 
 ENDPOINT_IP="$1"
 ROUTE="$2"
-CLIENT_PROC="boringtun-cli"
 IFACE=wg0
 SELF_PRIV_KEY="MOv7hICJE+V3fc2PqQQBOyWXQgG1hogB7VYdJwJLMkA="
 ENDPOINT_PUB_KEY="Ib6tSFEy7NSFSe8VmiBAG4P818TscYwYfxYvHB18CV8="
@@ -28,12 +27,5 @@ echo "$CONFIG" >>"$IFACE.conf"
 iptables -I OUTPUT -o eth0 -d "$ENDPOINT_IP" -j ACCEPT
 iptables -A OUTPUT -o eth0 -j DROP
 
-if ${USERSPACE:=false}; then
-  unset WG_QUICK_USERSPACE_IMPLEMENTATION
-  wg-quick up "./$IFACE.conf"
-  sleep infinity
-else
-  $CLIENT_PROC --disable-drop-privileges -f "$IFACE" &
-  ./wg-quick.sh up "./$IFACE.conf" &
-  wait
-fi
+wg-quick up "./$IFACE.conf"
+sleep infinity
