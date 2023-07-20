@@ -1,112 +1,154 @@
-# AdGuard VPN endpoint
+# AdGuard VPN Endpoint
 
-## Building
+[![AdGuardVPN.com](https://img.shields.io/badge/AdGuardVPN.com-Visit-007BFF)](https://adguard-vpn.com/)
 
-Execute the following commands in the Terminal:
+Free, fast, open-source, and secure self-hosted VPN server.
+
+---
+
+## Table of Contents
+
+- [Introduction](#introduction)
+- [Why AdGuard VPN?](#why-adguard-vpn)
+- [Getting Started](#getting-started)
+    - [Prerequisites](#prerequisites)
+    - [Building](#building)
+- [Usage](#usage)
+    - [Quick Start](#quick-start)
+    - [Customized Configuration](#customized-configuration)
+- [Companion Client Repository](#companion-client-repository)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
+## Introduction
+
+Welcome to the AdGuard VPN Endpoint repository!
+This comprehensive and efficient solution allows you to set up and manage your own VPN server.
+The repository includes the following components:
+
+1. **VPN Endpoint Library**: A highly efficient, versatile, and reliable Rust library that
+   implements the VPN endpoint.
+
+2. **VPN Endpoint Binary**: A standalone application that makes it easy for any user to set
+   up their own VPN server.
+
+3. **Setup-Wizard Tool**: A user-friendly tool that simplifies the configuration process by guiding
+   you through the necessary steps.
+
+## Why AdGuard VPN?
+
+- **AdGuard Protocol**: AdGuard VPN utilizes
+  [the AdGuard protocol](https://adguard-vpn.com/kb/general/adguard-vpn-protocol/),
+  which is compatible with HTTP/1.1, HTTP/2, and QUIC.
+  By mimicking regular network traffic, it becomes more difficult for government regulators to
+  detect and block.
+
+- **Flexible Traffic Tunneling**: AdGuard VPN can tunnel TCP, UDP, and ICMP traffic to and
+  from the client.
+
+- **Platform Compatibility**: It is compatible with Linux and macOS systems.
+
+- **Companion Client Repository**: An accompanying client is available in a separate repository,
+  allowing you to connect to your VPN server seamlessly.
+
+## Getting Started
+
+### Prerequisites
+
+Before proceeding, ensure that you have Rust installed on your system.
+Visit the [Rust installation page](https://www.rust-lang.org/tools/install) for
+detailed instructions.
+The minimum supported version of the Rust compiler is 1.67.
+This project is compatible with Linux and macOS systems.
+
+### Building
+
+To install AdGuard VPN Endpoint, follow these steps:
+
+1. Clone the repository:
+
+   ```shell
+   git clone https://github.com/AdguardTeam/VpnLibsEndpoint.git
+   cd VpnLibsEndpoint
+   ```
+
+2. Build the binaries using Cargo:
+
+   ```shell
+   cargo build --bins --release
+   ```
+
+   This command will generate the executables in the `target/release` directory.
+
+## Usage
+
+### Quick Start
+
+To quickly configure and launch the VPN endpoint, run the following commands:
 
 ```shell
-cargo build
+make endpoint/setup  # You can skip it if you have already configured the endpoint earlier
+make endpoint/run
 ```
 
-to build the debug version, or
+These commands perform the following actions:
+
+1. Build the wizard and endpoint binaries.
+
+2. Configure the endpoint to listen to all network interfaces for TCP/UDP packets on
+   port number 443.
+
+3. Generate self-signed certificate/private key pair in the current directory under `certs/`.
+
+4. Store all the required settings in `vpn.toml` and `hosts.toml` files.
+
+5. Start the endpoint.
+
+Alternatively, you can run the endpoint in a docker container:
 
 ```shell
-cargo build --release
+make docker/setup-and-run
 ```
 
-to build the release version.
+This command prepares an endpoint configuration, builds a docker image and runs it
+with the configuration.
 
-## Endpoint configuration
+The generated certificate (by default, it resides in `certs/cert.pem` or
+`docker/config/certs/cert.pem` in docker case) should be delivered to the client-side
+in some way. See the [Companion Client Repository](#companion-client-repository) for
+details.
 
-### Library configuration
+### Customized Configuration
 
-An endpoint can be configured using a couple of TOML files:
-
-1) The main library settings reflect (`struct Settings` in [settings.rs](./lib/src/settings.rs)).
-2) The TLS hosts library settings reflect (`struct TlsHostsSettings` in [settings.rs](./lib/src/settings.rs)).
-   These settings may be reloaded dynamically (see [here](#dynamic-reloading-of-tls-hosts-settings) for details).
-
-All of them may be generated using the [setup wizard](./tools/setup_wizard) tool.
-To configure the most basic options, execute the following command in the Terminal:
+For a more customized configuration experience, run the following commands:
 
 ```shell
-cargo run --bin setup_wizard
+make endpoint/build-wizard  # If you skipped the previous chapter
+cargo run --bin setup_wizard  # Launches a dialogue session allowing you to tweak the settings
+cargo run --bin vpn_endpoint -- <lib-settings> <hosts-settings>  # File names depend on the previous step
 ```
 
-To see the full set of available options, execute the following command in the Terminal:
+For additional details about the binary, refer to the [endpoint/README.md](./endpoint/README.md)
+file.
 
-```shell
-cargo run --bin setup_wizard -- -h
-```
+> The settings files created by the Setup Wizard contain almost all available settings,
+> including descriptions.
+> You can freely customize them if you are confident in your understanding of the configuration.
 
-### Endpoint executable features
+## Companion Client Repository
 
-#### Configuration
+To connect to your newly set-up VPN server, you need a client.
+The companion client's code can be found
+in [this repository](https://github.com/AdguardTeam/VpnLibs.git).
 
-Some options reside on the application level. Such options can be configured via command
-line arguments. For example:
+## Roadmap
 
-* [Sentry DSN](https://docs.sentry.io/product/sentry-basics/dsn-explainer/) is configured
-  by specifying `--sentry_dsn <url>`
-* Logging level is configured by `[--log_level|-l] [info|debug|trace]` (`info` - default)
-* Logging file is configured by `--log_file <path>`. If not specified, the instance logs
-  to `stdout`.
-
-To see the full set of available options, execute the following command in the Terminal:
-
-```shell
-cargo run --bin vpn_endpoint -- -h
-```
-
-#### Dynamic reloading of TLS hosts settings
-
-The executable is able to reload TLS hosts settings dynamically. To trigger this, send the SIGHUP signal
-to the process. After receiving, it reparses the TLS hosts settings file that was passed in arguments and
-applies the new settings.
-
-**IMPORTANT:** the file paths passed through the settings must remain valid until the process exit or until
-the next reloading.
-
-## Running
-
-To run the binary through `cargo`, execute the following commands in the Terminal:
-
-```shell
-cargo run --bin vpn_endpoint -- <path/to/vpn.config> <path/to/tls_hosts.config>
-```
-
-To run the binary directly, execute the following commands in the Terminal:
-
-```shell
-<path/to/target>/vpn_endpoint <path/to/vpn.config> <path/to/tls_hosts.config>
-```
-
-where `<path/to/target>` is determined by the build command (by default it is `./target/debug` or
-`./target/release` depending on the build type).
-
-## Testing with Google Chrome
-
-1) 2 options:
-    * Add the generated certificate to the trusted store and run the Google Chrome
-    * Run the Google Chrome from Terminal like this:
-    ```shell
-    google-chrome --ignore-certificate-errors
-    ```
-   **IMPORTANT:** the second option should be used just for testing, it removes the first line
-   of defence against malicious resources
-2) Set up the endpoint as an HTTPS proxy server in the browser (either via browser settings or
-   using an extension like `Proxy SwitchyOmega`)
-
-## Collecting metrics
-
-Common ways:
-
-* As plain text: send a GET request to `<ip>:<port>/metrics`, for example, using CURL
-  or a web browser
-* Set up Prometheus:
-    1) Configure the instance to monitor the endpoint metrics (see [here](https://prometheus.io/docs/prometheus/latest/getting_started/#configure-prometheus-to-monitor-the-sample-targets))
-    2) Use [the graph interface](https://prometheus.io/docs/prometheus/latest/getting_started/#using-the-graphing-interface)
+While our VPN currently supports tunneling TCP/UDP/ICMP traffic, we plan to add support for
+peer-to-peer communication between clients.
+Stay tuned for this feature in upcoming releases.
 
 ## License
 
-Apache 2.0
+This project is licensed under the Apache 2.0 License. See [LICENSE.md](LICENSE.md) for details.
