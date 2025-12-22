@@ -126,7 +126,7 @@ Deploy artifacts:
       ${system.HOME}/.ssh: /root/.ssh
     docker-run-arguments: [ ]
   tasks:
-    - !include docker-clean.yaml
+    - clean
     - checkout:
         description: Checkout Default Repository
         force-clean-build: 'true'
