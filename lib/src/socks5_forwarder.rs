@@ -225,12 +225,7 @@ impl forwarder::TcpConnector for TcpConnector {
 
         let stream = match TcpStream::connect(socks_settings(&self.core_settings).address).await {
             Ok(s) => s,
-            Err(e) => {
-                return Err(tunnel::ConnectionError::Io(io::Error::new(
-                    ErrorKind::Other,
-                    format!("Failed to connect to proxy server: {}", e),
-                )))
-            }
+            Err(e) => return Err(tunnel::ConnectionError::Io(e)),
         };
 
         match socks5_client::connect(
@@ -275,10 +270,7 @@ impl forwarder::TcpConnector for TcpConnector {
             Ok(socks5_client::ConnectResult::Failure(x)) => Err(tunnel::ConnectionError::Other(
                 format!("SOCKS server replied with error code: {:?}", x),
             )),
-            Err(socks5_client::Error::Io(x)) => Err(tunnel::ConnectionError::Io(io::Error::new(
-                ErrorKind::Other,
-                format!("Proxy connection error: {}", x),
-            ))),
+            Err(socks5_client::Error::Io(x)) => Err(tunnel::ConnectionError::Io(x)),
             Err(socks5_client::Error::Protocol(x)) => Err(tunnel::ConnectionError::Other(format!(
                 "SOCKS protocol error: {}",
                 x

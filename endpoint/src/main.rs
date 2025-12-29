@@ -265,11 +265,25 @@ fn main() {
         shutdown.lock().unwrap().completion().await
     };
 
-    rt.block_on(async move {
+    let exit_code = rt.block_on(async move {
         tokio::select! {
-            listen_result = listen_task => listen_result.expect("Error while listening IO events"),
-            _ = reload_tls_hosts_task => error!("Error while reloading TLS hosts"),
-            _ = interrupt_task => info!("Interrupted by user"),
+            listen_result = listen_task => match listen_result {
+                Ok(()) => 0,
+                Err(e) => {
+                    error!("Error while listening IO events: {}", e);
+                    1
+                }
+            },
+            _ = reload_tls_hosts_task => {
+                error!("Error while reloading TLS hosts");
+                1
+            },
+            _ = interrupt_task => {
+                info!("Interrupted by user");
+                0
+            },
         }
     });
+
+    std::process::exit(exit_code);
 }

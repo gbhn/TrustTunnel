@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UdpSocket};
+use tokio::sync::watch;
 
 #[derive(Debug)]
 pub enum Error {
@@ -41,18 +42,61 @@ pub struct Core {
     context: Arc<Context>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct FatalIoError {
+    kind: ErrorKind,
+    raw_os_error: Option<i32>,
+    message: String,
+}
+
+impl FatalIoError {
+    fn from_io_error(e: &io::Error) -> Self {
+        Self {
+            kind: e.kind(),
+            raw_os_error: e.raw_os_error(),
+            message: e.to_string(),
+        }
+    }
+
+    fn into_io_error(self) -> io::Error {
+        match self.raw_os_error {
+            Some(code) => {
+                io::Error::new(self.kind, format!("{} (os error {})", self.message, code))
+            }
+            None => io::Error::new(self.kind, self.message),
+        }
+    }
+}
+
 pub(crate) struct Context {
     pub settings: Arc<Settings>,
     pub authenticator: Option<Arc<dyn authentication::Authenticator>>,
     tls_demux: Arc<RwLock<TlsDemux>>,
     pub icmp_forwarder: Option<Arc<IcmpForwarder>>,
     pub shutdown: Arc<Mutex<Shutdown>>,
+    /// Channel for propagating fatal IO errors (e.g., EMFILE/ENFILE) from spawned tasks
+    /// to the main Core::listen() loop.
+    /// Spawned tasks report errors via Context::report_fatal_io_error().
+    fatal_error: watch::Sender<Option<FatalIoError>>,
     pub metrics: Arc<Metrics>,
     next_client_id: Arc<AtomicU64>,
     next_tunnel_id: Arc<AtomicU64>,
 }
 
+impl Context {
+    pub(crate) fn report_fatal_io_error(&self, e: &io::Error) {
+        let _ = self.fatal_error.send(Some(FatalIoError::from_io_error(e)));
+    }
+}
+
 impl Core {
+    pub(crate) fn is_too_many_open_files_error(e: &io::Error) -> bool {
+        matches!(
+            e.raw_os_error(),
+            Some(code) if code == libc::EMFILE || code == libc::ENFILE
+        )
+    }
+
     pub fn new(
         settings: Settings,
         authenticator: Option<Arc<dyn authentication::Authenticator>>,
@@ -70,6 +114,8 @@ impl Core {
 
         let settings = Arc::new(settings);
 
+        let (fatal_error, _fatal_error_rx) = watch::channel(None);
+
         Ok(Self {
             context: Arc::new(Context {
                 settings: settings.clone(),
@@ -84,6 +130,7 @@ impl Core {
                     Some(Arc::new(IcmpForwarder::new(settings)))
                 },
                 shutdown,
+                fatal_error,
                 metrics: Metrics::new().map_err(|e| Error::Metrics(e.to_string()))?,
                 next_client_id: Default::default(),
                 next_tunnel_id: Default::default(),
@@ -127,9 +174,18 @@ impl Core {
             )
         };
 
+        let mut fatal_error_rx = self.context.fatal_error.subscribe();
+
         tokio::select! {
             x = shutdown_notification.wait() => {
                 x.map_err(|e| io::Error::new(ErrorKind::Other, format!("{}", e)))
+            },
+            x = fatal_error_rx.changed() => match x {
+                Ok(()) => match fatal_error_rx.borrow().clone() {
+                    Some(e) => Err(e.into_io_error()),
+                    None => Err(io::Error::new(ErrorKind::Other, "Unknown fatal error reported")),
+                },
+                Err(_) => Err(io::Error::new(ErrorKind::Other, "Fatal error channel is unexpectedly closed")),
             },
             x = futures::future::try_join4(
                 listen_tcp,
@@ -657,6 +713,7 @@ impl Core {
 impl Default for Context {
     fn default() -> Self {
         let settings = Arc::new(Settings::default());
+        let (fatal_error, _fatal_error_rx) = watch::channel(None);
         Self {
             settings: settings.clone(),
             authenticator: None,
@@ -665,6 +722,7 @@ impl Default for Context {
             )),
             icmp_forwarder: None,
             shutdown: Shutdown::new(),
+            fatal_error,
             metrics: Metrics::new().unwrap(),
             next_client_id: Default::default(),
             next_tunnel_id: Default::default(),

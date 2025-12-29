@@ -130,6 +130,17 @@ impl Tunnel {
             };
 
             tokio::spawn(async move {
+                fn report_fatal_if_too_many_open_files(
+                    context: &Arc<core::Context>,
+                    e: &ConnectionError,
+                ) {
+                    if let ConnectionError::Io(io) = e {
+                        if core::Core::is_too_many_open_files_error(io) {
+                            context.report_fatal_io_error(io);
+                        }
+                    }
+                }
+
                 let request_id = request.id();
                 log_id!(trace, request_id, "Processing tunnel request");
                 let auth_info = request
@@ -185,7 +196,7 @@ impl Tunnel {
                     Ok(Some(PendingDemultiplexedRequest::TcpConnect(request))) => {
                         log_id!(trace, request_id, "Handling TCP connect request");
                         if let Err((request, message, e)) = Tunnel::on_tcp_connect_request(
-                            context,
+                            context.clone(),
                             forwarder,
                             request,
                             forwarder_auth,
@@ -194,6 +205,7 @@ impl Tunnel {
                         )
                         .await
                         {
+                            report_fatal_if_too_many_open_files(&context, &e);
                             log_id!(debug, request_id, "{}: {}", message, e);
                             if let Some(request) = request {
                                 request.fail_request(e);
@@ -203,7 +215,7 @@ impl Tunnel {
                     Ok(Some(PendingDemultiplexedRequest::DatagramMultiplexer(request))) => {
                         log_id!(trace, request_id, "Handling datagram multiplexer request");
                         if let Err((request, message, e)) = Tunnel::on_datagram_mux_request(
-                            context,
+                            context.clone(),
                             forwarder,
                             request,
                             forwarder_auth,
@@ -212,6 +224,7 @@ impl Tunnel {
                         )
                         .await
                         {
+                            report_fatal_if_too_many_open_files(&context, &e);
                             log_id!(debug, request_id, "{}: {}", message, e);
                             if let Some(request) = request {
                                 request.fail_request(e);
