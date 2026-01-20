@@ -25,6 +25,7 @@
         - [Updating the endpoint](#updating-the-endpoint)
         - [TrustTunnel Flutter Client 1.0 Warning](#trusttunnel-flutter-client-10-warning)
         - [Endpoint configuration wizard](#endpoint-configuration-wizard)
+        - [Let's Encrypt certificate lifecycle](#lets-encrypt-certificate-lifecycle)
         - [Running endpoint](#running-endpoint)
         - [Export client configuration](#export-client-configuration)
     - [Client setup](#client-setup)
@@ -212,6 +213,12 @@ values you could safely use:
 At this point all required configuration files are created and saved on disk.
 
 [certbot]: https://eff-certbot.readthedocs.io/en/stable/
+
+#### Let's Encrypt certificate lifecycle
+
+The setup wizard can obtain a Let's Encrypt certificate during initial setup, but you are responsible for ensuring it stays valid over time (renewal and service reload/restart).
+
+If you're using Certbot to manage certificates and renew them automatically, follow the guide in [CERT_RENEWAL.md](CERT_RENEWAL.md).
 
 #### Running endpoint
 
