@@ -1,6 +1,6 @@
 [package]
 name = "trusttunnel_endpoint"
-version = "0.9.122"
+version = "0.9.123"
 authors = ["Sergei Gunchenko <s.gunchenko@adguard.com>"]
 edition = "2021"
 
