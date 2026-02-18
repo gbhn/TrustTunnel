@@ -23,6 +23,47 @@ const CUSTOM_SNI_PARAM_NAME: &str = "custom_sni";
 const SENTRY_DSN_PARAM_NAME: &str = "sentry_dsn";
 const THREADS_NUM_PARAM_NAME: &str = "threads_num";
 
+/// Load credentials from a TOML file and return an authenticator if clients are found.
+fn load_authenticator_from_file(path: &str) -> Result<Option<Arc<dyn Authenticator>>, String> {
+    use trusttunnel::authentication::registry_based::Client;
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Couldn't read credentials file '{}': {}", path, e))?;
+    let doc: toml::Table = content
+        .parse()
+        .map_err(|e| format!("Couldn't parse credentials file '{}': {}", path, e))?;
+
+    let clients: Vec<Client> = match doc.get("client") {
+        Some(toml::Value::Array(arr)) => arr
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let table = entry
+                    .as_table()
+                    .ok_or_else(|| format!("Client #{}: expected a table", i + 1))?;
+                let username = table
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("Client #{}: missing username", i + 1))?
+                    .to_string();
+                let password = table
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("Client #{}: missing password", i + 1))?
+                    .to_string();
+                Ok(Client { username, password })
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+        _ => return Ok(None),
+    };
+
+    if clients.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(Arc::new(RegistryBasedAuthenticator::new(&clients))))
+    }
+}
+
 #[cfg(unix)]
 fn increase_fd_limit() {
     use nix::sys::resource::{getrlimit, setrlimit, Resource};
@@ -167,10 +208,18 @@ fn main() {
     increase_fd_limit();
 
     let settings_path = args.get_one::<String>(SETTINGS_PARAM_NAME).unwrap();
-    let settings: Settings = toml::from_str(
-        &std::fs::read_to_string(settings_path).expect("Couldn't read the settings file"),
-    )
-    .expect("Couldn't parse the settings file");
+    let settings_content =
+        std::fs::read_to_string(settings_path).expect("Couldn't read the settings file");
+
+    // Extract the credentials_file path from raw TOML before Settings consumes it,
+    // so we can re-read it on SIGHUP for credential reloading.
+    let credentials_file_path: Option<String> = settings_content
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| t.get("credentials_file")?.as_str().map(String::from));
+
+    let settings: Settings =
+        toml::from_str(&settings_content).expect("Couldn't parse the settings file");
 
     if settings.get_clients().is_empty() && settings.get_listen_address().ip().is_loopback() {
         warn!(
@@ -268,6 +317,7 @@ fn main() {
 
     let reload_tls_hosts_task = {
         let tls_hosts_settings_path = tls_hosts_settings_path.clone();
+        let credentials_file_path = credentials_file_path.clone();
         async move {
             let mut sighup_listener = signal::unix::signal(signal::unix::SignalKind::hangup())
                 .expect("Couldn't start SIGHUP listener");
@@ -285,6 +335,19 @@ fn main() {
                 core.reload_tls_hosts_settings(tls_hosts_settings)
                     .expect("Couldn't apply new settings");
                 info!("TLS hosts settings are successfully reloaded");
+
+                if let Some(ref creds_path) = credentials_file_path {
+                    info!("Reloading credentials");
+                    match load_authenticator_from_file(creds_path) {
+                        Ok(authenticator) => {
+                            core.reload_authenticator(authenticator);
+                            info!("Credentials are successfully reloaded");
+                        }
+                        Err(e) => {
+                            error!("Failed to reload credentials: {}", e);
+                        }
+                    }
+                }
             }
         }
     };

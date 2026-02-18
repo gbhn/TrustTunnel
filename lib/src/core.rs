@@ -70,7 +70,7 @@ impl FatalIoError {
 
 pub(crate) struct Context {
     pub settings: Arc<Settings>,
-    pub authenticator: Option<Arc<dyn authentication::Authenticator>>,
+    pub authenticator: RwLock<Option<Arc<dyn authentication::Authenticator>>>,
     tls_demux: Arc<RwLock<TlsDemux>>,
     pub icmp_forwarder: Option<Arc<IcmpForwarder>>,
     pub shutdown: Arc<Mutex<Shutdown>>,
@@ -119,7 +119,7 @@ impl Core {
         Ok(Self {
             context: Arc::new(Context {
                 settings: settings.clone(),
-                authenticator,
+                authenticator: RwLock::new(authenticator),
                 tls_demux: Arc::new(RwLock::new(
                     TlsDemux::new(&settings, &tls_hosts_settings)
                         .map_err(|e| Error::TlsDemultiplexer(e.to_string()))?,
@@ -214,6 +214,15 @@ impl Core {
 
         *demux = TlsDemux::new(&self.context.settings, &settings)?;
         Ok(())
+    }
+
+    /// Reload the client authenticator
+    pub fn reload_authenticator(
+        &self,
+        authenticator: Option<Arc<dyn authentication::Authenticator>>,
+    ) {
+        let mut auth = self.context.authenticator.write().unwrap();
+        *auth = authenticator;
     }
 
     async fn listen_tcp(&self) -> io::Result<()> {
@@ -642,7 +651,7 @@ impl Core {
     ) {
         let _metrics_guard = Metrics::client_sessions_counter(context.metrics.clone(), protocol);
 
-        let authentication_policy = match context.authenticator.as_ref().zip(sni_auth_creds) {
+        let authentication_policy = match context.authenticator.read().unwrap().clone().zip(sni_auth_creds) {
             None => tunnel::AuthenticationPolicy::Default,
             Some((authenticator, credentials)) => {
                 let auth = authentication::Source::Sni(credentials.into());
@@ -709,7 +718,7 @@ impl Default for Context {
         let (fatal_error, _fatal_error_rx) = watch::channel(None);
         Self {
             settings: settings.clone(),
-            authenticator: None,
+            authenticator: RwLock::new(None),
             tls_demux: Arc::new(RwLock::new(
                 TlsDemux::new(&settings, &settings::TlsHostsSettings::default()).unwrap(),
             )),

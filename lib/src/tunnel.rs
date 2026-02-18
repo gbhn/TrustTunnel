@@ -149,7 +149,7 @@ impl Tunnel {
                 let forwarder_auth = match (
                     auth_info,
                     authentication_policy,
-                    context.authenticator.clone(),
+                    context.authenticator.read().unwrap().clone(),
                 ) {
                     (Ok(Some(source)), _, Some(authenticator)) => {
                         match authenticator.authenticate(&source, &log_id) {
