@@ -20,6 +20,8 @@ const TLS_HOSTS_SETTINGS_PARAM_NAME: &str = "tls_hosts_settings";
 const CLIENT_CONFIG_PARAM_NAME: &str = "client_config";
 const ADDRESS_PARAM_NAME: &str = "address";
 const CUSTOM_SNI_PARAM_NAME: &str = "custom_sni";
+const CLIENT_RANDOM_PREFIX_PARAM_NAME: &str = "client_random_prefix";
+const FORMAT_PARAM_NAME: &str = "format";
 const SENTRY_DSN_PARAM_NAME: &str = "sentry_dsn";
 const THREADS_NUM_PARAM_NAME: &str = "threads_num";
 
@@ -160,7 +162,21 @@ fn main() {
                 .requires(CLIENT_CONFIG_PARAM_NAME)
                 .short('s')
                 .long("custom-sni")
-                .help("Custom SNI override for client connection. Must match an allowed_sni in hosts.toml.")
+                .help("Custom SNI override for client connection. Must match an allowed_sni in hosts.toml."),
+            clap::Arg::new(CLIENT_RANDOM_PREFIX_PARAM_NAME)
+                .action(clap::ArgAction::Set)
+                .requires(CLIENT_CONFIG_PARAM_NAME)
+                .short('r')
+                .long("client-random-prefix")
+                .help("TLS client random hex prefix for connection filtering. Must have a corresponding rule in rules.toml."),
+            clap::Arg::new(FORMAT_PARAM_NAME)
+                .action(clap::ArgAction::Set)
+                .requires(CLIENT_CONFIG_PARAM_NAME)
+                .short('f')
+                .long("format")
+                .value_parser(["toml", "deeplink"])
+                .default_value("deeplink")
+                .help("Output format for client configuration: 'deeplink' produces tt:// URI, 'toml' produces traditional config file")
         ])
         .disable_version_flag(true)
         .get_matches();
@@ -269,14 +285,77 @@ fn main() {
             }
         }
 
+        let mut client_random_prefix = args
+            .get_one::<String>(CLIENT_RANDOM_PREFIX_PARAM_NAME)
+            .cloned();
+        if let Some(ref prefix) = client_random_prefix {
+            // Validate hex format
+            if hex::decode(prefix).is_err() {
+                eprintln!("Error: client_random_prefix '{}' is not valid hex", prefix);
+                std::process::exit(1);
+            }
+
+            // Validate against rules.toml
+            if let Some(rules_engine) = settings.get_rules_engine() {
+                let has_matching_rule = rules_engine.config().rule.iter().any(|rule| {
+                    rule.client_random_prefix
+                        .as_ref()
+                        .map(|p| {
+                            // Handle both "prefix" and "prefix/mask" formats
+                            if let Some(slash) = p.find('/') {
+                                &p[..slash] == prefix
+                            } else {
+                                p == prefix
+                            }
+                        })
+                        .unwrap_or(false)
+                });
+
+                // Print warning and continue, do not panic because it's optional field
+                if !has_matching_rule {
+                    eprintln!(
+                        "Warning: No rule found in rules.toml matching client_random_prefix '{}'. This field will be ignored.",
+                        prefix
+                    );
+                    client_random_prefix = None;
+                }
+            }
+        }
+
         let client_config = client_config::build(
             username,
             addresses,
             settings.get_clients(),
             &tls_hosts_settings,
             custom_sni,
+            client_random_prefix,
         );
-        println!("{}", client_config.compose_toml());
+
+        let format = args
+            .get_one::<String>(FORMAT_PARAM_NAME)
+            .map(String::as_str)
+            .unwrap_or("deeplink");
+
+        match format {
+            "toml" => {
+                println!("{}", client_config.compose_toml());
+            }
+            "deeplink" => match client_config.compose_deeplink() {
+                Ok(deep_link) => println!("{}", deep_link),
+                Err(e) => {
+                    eprintln!("Error generating deep-link: {}", e);
+                    std::process::exit(1);
+                }
+            },
+            _ => {
+                eprintln!(
+                    "Error: unsupported format '{}'. Use 'toml' or 'deeplink'.",
+                    format
+                );
+                std::process::exit(1);
+            }
+        }
+
         return;
     }
 

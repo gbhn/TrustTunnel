@@ -1,0 +1,103 @@
+use proptest::prelude::*;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use trusttunnel_deeplink::{decode, encode, DeepLinkConfig, Protocol};
+
+fn arbitrary_socket_addr() -> impl Strategy<Value = SocketAddr> {
+    prop_oneof![
+        any::<Ipv4Addr>().prop_map(|ip| SocketAddr::new(IpAddr::V4(ip), 443)),
+        any::<Ipv6Addr>().prop_map(|ip| SocketAddr::new(IpAddr::V6(ip), 443)),
+    ]
+}
+
+fn arbitrary_protocol() -> impl Strategy<Value = Protocol> {
+    prop_oneof![Just(Protocol::Http2), Just(Protocol::Http3),]
+}
+
+fn arbitrary_hex_string() -> impl Strategy<Value = Option<String>> {
+    prop::option::of("([0-9a-f]{2}){0,16}")
+}
+
+fn arbitrary_config() -> impl Strategy<Value = DeepLinkConfig> {
+    (
+        "[a-z]{3,20}\\.[a-z]{3,10}\\.[a-z]{2,5}",
+        prop::collection::vec(arbitrary_socket_addr(), 1..5),
+        "[a-z0-9_]{3,20}",
+        "[a-zA-Z0-9!@#$%]{8,30}",
+        arbitrary_hex_string(),
+        prop::option::of("[a-z]{3,15}\\.[a-z]{2,10}\\.[a-z]{2,5}"),
+        any::<bool>(),
+        any::<bool>(),
+        prop::option::of(prop::collection::vec(any::<u8>(), 0..100)),
+        arbitrary_protocol(),
+        any::<bool>(),
+    )
+        .prop_map(
+            |(
+                hostname,
+                addresses,
+                username,
+                password,
+                client_random_prefix,
+                custom_sni,
+                has_ipv6,
+                skip_verification,
+                certificate,
+                upstream_protocol,
+                anti_dpi,
+            )| {
+                DeepLinkConfig {
+                    hostname,
+                    addresses,
+                    username,
+                    password,
+                    client_random_prefix,
+                    custom_sni,
+                    has_ipv6,
+                    skip_verification,
+                    certificate,
+                    upstream_protocol,
+                    anti_dpi,
+                }
+            },
+        )
+}
+
+proptest! {
+    #[test]
+    fn test_encode_decode_roundtrip(config in arbitrary_config()) {
+        let uri = encode(&config).unwrap();
+        let decoded = decode(&uri).unwrap();
+
+        prop_assert_eq!(decoded.hostname, config.hostname);
+        prop_assert_eq!(decoded.addresses, config.addresses);
+        prop_assert_eq!(decoded.username, config.username);
+        prop_assert_eq!(decoded.password, config.password);
+        prop_assert_eq!(decoded.custom_sni, config.custom_sni);
+        prop_assert_eq!(decoded.has_ipv6, config.has_ipv6);
+        prop_assert_eq!(decoded.skip_verification, config.skip_verification);
+        prop_assert_eq!(decoded.certificate, config.certificate);
+        prop_assert_eq!(decoded.upstream_protocol, config.upstream_protocol);
+        prop_assert_eq!(decoded.anti_dpi, config.anti_dpi);
+    }
+
+    #[test]
+    fn test_uri_starts_with_scheme(config in arbitrary_config()) {
+        let uri = encode(&config).unwrap();
+        prop_assert!(uri.starts_with("tt://"));
+    }
+
+    #[test]
+    fn test_uri_no_padding(config in arbitrary_config()) {
+        let uri = encode(&config).unwrap();
+        prop_assert!(!uri.contains('='));
+    }
+
+    #[test]
+    fn test_varint_roundtrip(value in 0u64..0x3FFFFFFFFFFFFFFF) {
+        use trusttunnel_deeplink::varint::{encode_varint, decode_varint};
+
+        let encoded = encode_varint(value).unwrap();
+        let (decoded, _) = decode_varint(&encoded, 0).unwrap();
+        prop_assert_eq!(decoded, value);
+    }
+}

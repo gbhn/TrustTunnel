@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 0.9.137
+
+- [Feature] Added `client_random_prefix` field to client configuration export
+    - New CLI option `--client-random-prefix`
+    - Validates hex format and checks against `rules.toml`
+    - Added to deep-link format as tag 0x0B
+- [Feature] Added new `trusttunnel-deeplink` library crate for encoding/decoding `tt://` URIs
+
 ## 0.9.127
 
 - [Feature] Added GPG signing of the endpoint binaries.

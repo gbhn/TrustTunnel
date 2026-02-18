@@ -82,6 +82,7 @@ TAG_SKIP_VERIFICATION  = 0x07
 TAG_CERTIFICATE        = 0x08
 TAG_UPSTREAM_PROTOCOL  = 0x09
 TAG_ANTI_DPI           = 0x0A
+TAG_CLIENT_RANDOM_PREFIX = 0x0B
 
 PROTOCOL_MAP = {"http2": 0x01, "http3": 0x02}
 
@@ -113,6 +114,10 @@ def encode_config(cfg: dict) -> bytes:
         raise KeyError("missing required field: addresses")
     for addr in addresses:
         buf += tlv(TAG_ADDRESS, addr.encode())
+
+    # client_random_prefix (optional hex-encoded string)
+    if "client_random_prefix" in cfg and cfg["client_random_prefix"]:
+        buf += tlv(TAG_CLIENT_RANDOM_PREFIX, cfg["client_random_prefix"].encode())
 
     # Optional string fields
     if "custom_sni" in cfg:

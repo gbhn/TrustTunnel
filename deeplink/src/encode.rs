@@ -1,0 +1,206 @@
+use crate::error::Result;
+use crate::types::{DeepLinkConfig, Protocol, TlvTag};
+use crate::varint::encode_varint;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+/// Encode a Tag-Length-Value entry.
+fn encode_tlv(tag: TlvTag, value: &[u8]) -> Result<Vec<u8>> {
+    let mut result = encode_varint(u64::from(tag.as_u8()))?;
+    result.extend(encode_varint(value.len() as u64)?);
+    result.extend_from_slice(value);
+    Ok(result)
+}
+
+/// Encode a string field as TLV.
+fn encode_string_field(tag: TlvTag, value: &str) -> Result<Vec<u8>> {
+    encode_tlv(tag, value.as_bytes())
+}
+
+/// Encode a boolean field as TLV (1 byte: 0x01 for true, 0x00 for false).
+fn encode_bool_field(tag: TlvTag, value: bool) -> Result<Vec<u8>> {
+    encode_tlv(tag, if value { &[0x01] } else { &[0x00] })
+}
+
+/// Encode upstream protocol as TLV (1 byte: 0x01 for http2, 0x02 for http3).
+fn encode_protocol_field(protocol: Protocol) -> Result<Vec<u8>> {
+    encode_tlv(TlvTag::UpstreamProtocol, &[protocol.as_u8()])
+}
+
+/// Encode binary payload to base64url (URL-safe base64 without padding).
+fn encode_base64url(payload: &[u8]) -> String {
+    URL_SAFE_NO_PAD.encode(payload)
+}
+
+/// Encode a DeepLinkConfig into TLV binary payload.
+pub fn encode_tlv_payload(config: &DeepLinkConfig) -> Result<Vec<u8>> {
+    config.validate()?;
+
+    let mut payload = Vec::new();
+
+    // Required fields - order matches Python reference implementation
+    payload.extend(encode_string_field(TlvTag::Hostname, &config.hostname)?);
+    payload.extend(encode_string_field(TlvTag::Username, &config.username)?);
+    payload.extend(encode_string_field(TlvTag::Password, &config.password)?);
+
+    for addr in &config.addresses {
+        payload.extend(encode_string_field(TlvTag::Address, &addr.to_string())?);
+    }
+
+    // client_random_prefix: include if present and non-empty
+    if let Some(ref prefix) = config.client_random_prefix {
+        if !prefix.is_empty() {
+            payload.extend(encode_string_field(TlvTag::ClientRandomPrefix, prefix)?);
+        }
+    }
+
+    // Optional fields (omit if default value or None) - order matches Python
+    if let Some(custom_sni) = &config.custom_sni {
+        payload.extend(encode_string_field(TlvTag::CustomSni, custom_sni)?);
+    }
+
+    // has_ipv6 default is true, so only encode if false
+    if !config.has_ipv6 {
+        payload.extend(encode_bool_field(TlvTag::HasIpv6, false)?);
+    }
+
+    // skip_verification default is false, so only encode if true
+    if config.skip_verification {
+        payload.extend(encode_bool_field(TlvTag::SkipVerification, true)?);
+    }
+
+    // anti_dpi default is false, so only encode if true
+    if config.anti_dpi {
+        payload.extend(encode_bool_field(TlvTag::AntiDpi, true)?);
+    }
+
+    // Certificate: include if present
+    if let Some(cert_der) = &config.certificate {
+        payload.extend(encode_tlv(TlvTag::Certificate, cert_der)?);
+    }
+
+    // upstream_protocol default is Http2, so only encode if Http3
+    if config.upstream_protocol != Protocol::Http2 {
+        payload.extend(encode_protocol_field(config.upstream_protocol)?);
+    }
+
+    Ok(payload)
+}
+
+/// Encode a configuration into a deep-link URI (`tt://...`).
+///
+/// # Errors
+///
+/// Returns `DeepLinkError` if encoding fails (e.g., missing required fields,
+/// invalid data, varint overflow).
+pub fn encode(config: &DeepLinkConfig) -> Result<String> {
+    let payload = encode_tlv_payload(config)?;
+    let encoded = encode_base64url(&payload);
+    Ok(format!("tt://{}", encoded))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+
+    #[test]
+    fn test_encode_tlv() {
+        let result = encode_tlv(TlvTag::Hostname, b"example.com").unwrap();
+        assert_eq!(result[0], 0x01); // tag
+        assert_eq!(result[1], 11); // length
+        assert_eq!(&result[2..], b"example.com");
+    }
+
+    #[test]
+    fn test_encode_string_field() {
+        let result = encode_string_field(TlvTag::Username, "alice").unwrap();
+        assert_eq!(result[0], 0x05); // Username tag
+        assert_eq!(result[1], 5); // length
+        assert_eq!(&result[2..], b"alice");
+    }
+
+    #[test]
+    fn test_encode_bool_field() {
+        let result_true = encode_bool_field(TlvTag::HasIpv6, true).unwrap();
+        assert_eq!(result_true[0], 0x04); // HasIpv6 tag
+        assert_eq!(result_true[1], 1); // length
+        assert_eq!(result_true[2], 0x01); // true
+
+        let result_false = encode_bool_field(TlvTag::SkipVerification, false).unwrap();
+        assert_eq!(result_false[0], 0x07); // SkipVerification tag
+        assert_eq!(result_false[1], 1); // length
+        assert_eq!(result_false[2], 0x00); // false
+    }
+
+    #[test]
+    fn test_encode_protocol_field() {
+        let result_http2 = encode_protocol_field(Protocol::Http2).unwrap();
+        assert_eq!(result_http2[0], 0x09); // UpstreamProtocol tag
+        assert_eq!(result_http2[1], 1); // length
+        assert_eq!(result_http2[2], 0x01); // http2
+
+        let result_http3 = encode_protocol_field(Protocol::Http3).unwrap();
+        assert_eq!(result_http3[2], 0x02); // http3
+    }
+
+    #[test]
+    fn test_encode_base64url() {
+        let data = b"hello world";
+        let encoded = encode_base64url(data);
+        assert_eq!(encoded, "aGVsbG8gd29ybGQ");
+        assert!(!encoded.contains('='));
+    }
+
+    #[test]
+    fn test_encode_tlv_payload_minimal() {
+        let config = DeepLinkConfig::builder()
+            .hostname("vpn.example.com".to_string())
+            .addresses(vec!["1.2.3.4:443".parse::<SocketAddr>().unwrap()])
+            .username("alice".to_string())
+            .password("secret".to_string())
+            .build()
+            .unwrap();
+
+        let payload = encode_tlv_payload(&config).unwrap();
+
+        // Should contain required fields only (has_ipv6=true is default, so omitted)
+        assert!(!payload.is_empty());
+    }
+
+    #[test]
+    fn test_encode_tlv_payload_with_optional_fields() {
+        let config = DeepLinkConfig::builder()
+            .hostname("vpn.example.com".to_string())
+            .addresses(vec!["1.2.3.4:443".parse().unwrap()])
+            .username("alice".to_string())
+            .password("secret".to_string())
+            .custom_sni(Some("example.org".to_string()))
+            .has_ipv6(false)
+            .skip_verification(true)
+            .upstream_protocol(Protocol::Http3)
+            .anti_dpi(true)
+            .build()
+            .unwrap();
+
+        let payload = encode_tlv_payload(&config).unwrap();
+
+        // Should contain all fields
+        assert!(!payload.is_empty());
+    }
+
+    #[test]
+    fn test_encode_full_uri() {
+        let config = DeepLinkConfig::builder()
+            .hostname("vpn.example.com".to_string())
+            .addresses(vec!["1.2.3.4:443".parse().unwrap()])
+            .username("alice".to_string())
+            .password("secret".to_string())
+            .build()
+            .unwrap();
+
+        let uri = encode(&config).unwrap();
+
+        assert!(uri.starts_with("tt://"));
+        assert!(!uri.contains('='));
+    }
+}

@@ -33,7 +33,8 @@ once_cell = "1.18.0"
 prometheus = { version = "0.14", features = ["process"] }
 quiche = { version = "0.24.5", features = ["qlog", "boringssl-boring-crate"] }
 ring = "0.17.12"
-rustls = { version = "0.21.2", features = ["logging"] }
+rustls = { version = "0.21.2", features = ["logging", "dangerous_configuration"] }
+rustls-native-certs = "0.6"
 rustls-pki-types = "1.13.2"
 serde = "1.0.164"
 smallvec = "1.10.0"
@@ -42,10 +43,12 @@ tokio = { version = "1.42", features = ["net", "rt", "sync", "time", "macros", "
 tokio-rustls = "0.24.1"
 toml_edit = "0.19.10"
 boring = "4"
+trusttunnel-deeplink = { path = "../deeplink" }
 
 [dev-dependencies]
 hyper = { version = "0.14.26", features = ["http1", "http2", "client", "server", "runtime", "stream"] }
 rustls = { version = "0.21.2", features = ["logging", "dangerous_configuration"] }
+tempfile = "3"
 
 [features]
 rt_doc = ["dep:macros"]

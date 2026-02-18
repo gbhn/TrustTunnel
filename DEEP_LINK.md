@@ -71,6 +71,7 @@ in one or two bytes.
 | `0x04` | `has_ipv6` | 1 byte: `0x01` = true, `0x00` = false | no (default `true`) |
 | `0x05` | `username` | UTF-8 string | yes |
 | `0x06` | `password` | UTF-8 string | yes |
+| `0x0B` | `client_random_prefix` | UTF-8 hex-encoded string | no |
 | `0x07` | `skip_verification` | 1 byte: `0x01` = true, `0x00` = false | no (default `false`) |
 | `0x08` | `certificate` | Concatenated DER-encoded certificates (raw binary); omit if the chain is verified by system CAs | no |
 | `0x09` | `upstream_protocol` | 1 byte: `0x01` = `http2`, `0x02` = `http3` | no (default `http2`) |

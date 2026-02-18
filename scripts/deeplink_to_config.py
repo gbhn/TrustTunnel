@@ -54,6 +54,7 @@ TAG_SKIP_VERIFICATION  = 0x07
 TAG_CERTIFICATE        = 0x08
 TAG_UPSTREAM_PROTOCOL  = 0x09
 TAG_ANTI_DPI           = 0x0A
+TAG_CLIENT_RANDOM_PREFIX = 0x0B
 
 PROTOCOL_RMAP = {0x01: "http2", 0x02: "http3"}
 
@@ -166,6 +167,8 @@ def decode_config(data: bytes) -> dict:
             cfg["upstream_protocol"] = PROTOCOL_RMAP[proto_byte]
         elif tag == TAG_ANTI_DPI:
             cfg["anti_dpi"] = value[0] != 0
+        elif tag == TAG_CLIENT_RANDOM_PREFIX:
+            cfg["client_random_prefix"] = value.decode()
         # Unknown tags are silently ignored per spec.
 
     if addresses:
@@ -206,6 +209,7 @@ _FIELD_ORDER: list[tuple[str, str]] = [
     ("has_ipv6",          "Whether IPv6 traffic can be routed through the endpoint"),
     ("username",          "Username for authorization"),
     ("password",          "Password for authorization"),
+    ("client_random_prefix", "TLS client random hex prefix for connection filtering"),
     ("skip_verification", "Skip the endpoint certificate verification?\n"
                           "# That is, any certificate is accepted with this one set to true."),
     ("certificate",       "Endpoint certificate in PEM format.\n"

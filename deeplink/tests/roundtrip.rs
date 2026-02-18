@@ -1,0 +1,277 @@
+use std::net::SocketAddr;
+use trusttunnel_deeplink::{decode, encode, DeepLinkConfig, Protocol};
+
+#[test]
+fn test_roundtrip_minimal_config() {
+    let original = DeepLinkConfig::builder()
+        .hostname("vpn.example.com".to_string())
+        .addresses(vec!["1.2.3.4:443".parse::<SocketAddr>().unwrap()])
+        .username("alice".to_string())
+        .password("secret123".to_string())
+        .build()
+        .unwrap();
+
+    let uri = encode(&original).unwrap();
+    assert!(uri.starts_with("tt://"));
+
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.hostname, original.hostname);
+    assert_eq!(decoded.addresses, original.addresses);
+    assert_eq!(decoded.username, original.username);
+    assert_eq!(decoded.password, original.password);
+    assert_eq!(decoded.has_ipv6, original.has_ipv6);
+    assert_eq!(decoded.upstream_protocol, original.upstream_protocol);
+    assert_eq!(decoded.anti_dpi, original.anti_dpi);
+}
+
+#[test]
+fn test_roundtrip_maximal_config() {
+    let original = DeepLinkConfig::builder()
+        .hostname("secure.vpn.example.com".to_string())
+        .addresses(vec![
+            "192.168.1.1:8443".parse().unwrap(),
+            "10.0.0.1:443".parse().unwrap(),
+        ])
+        .username("premium_user".to_string())
+        .password("very_secret_password_123".to_string())
+        .custom_sni(Some("cdn.example.org".to_string()))
+        .has_ipv6(false)
+        .skip_verification(true)
+        .certificate(Some(vec![0x30, 0x82, 0x01, 0x23]))
+        .upstream_protocol(Protocol::Http3)
+        .anti_dpi(true)
+        .build()
+        .unwrap();
+
+    let uri = encode(&original).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.hostname, original.hostname);
+    assert_eq!(decoded.addresses, original.addresses);
+    assert_eq!(decoded.username, original.username);
+    assert_eq!(decoded.password, original.password);
+    assert_eq!(decoded.custom_sni, original.custom_sni);
+    assert_eq!(decoded.has_ipv6, original.has_ipv6);
+    assert_eq!(decoded.skip_verification, original.skip_verification);
+    assert_eq!(decoded.certificate, original.certificate);
+    assert_eq!(decoded.upstream_protocol, original.upstream_protocol);
+    assert_eq!(decoded.anti_dpi, original.anti_dpi);
+}
+
+#[test]
+fn test_roundtrip_with_certificate() {
+    let cert_der = vec![
+        0x30, 0x82, 0x03, 0x52, 0x30, 0x82, 0x02, 0x3A, 0xA0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x09,
+        0x00,
+    ];
+
+    let original = DeepLinkConfig::builder()
+        .hostname("vpn.secure.com".to_string())
+        .addresses(vec!["203.0.113.1:443".parse().unwrap()])
+        .username("user".to_string())
+        .password("pass".to_string())
+        .certificate(Some(cert_der.clone()))
+        .build()
+        .unwrap();
+
+    let uri = encode(&original).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.certificate, Some(cert_der));
+}
+
+#[test]
+fn test_roundtrip_without_certificate() {
+    let original = DeepLinkConfig::builder()
+        .hostname("vpn.trusted.com".to_string())
+        .addresses(vec!["198.51.100.1:443".parse().unwrap()])
+        .username("user".to_string())
+        .password("pass".to_string())
+        .certificate(None)
+        .build()
+        .unwrap();
+
+    let uri = encode(&original).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.certificate, None);
+}
+
+#[test]
+fn test_roundtrip_multiple_addresses() {
+    let original = DeepLinkConfig::builder()
+        .hostname("multi.vpn.com".to_string())
+        .addresses(vec![
+            "1.1.1.1:443".parse().unwrap(),
+            "8.8.8.8:8443".parse().unwrap(),
+            "9.9.9.9:9443".parse().unwrap(),
+        ])
+        .username("multiaddr".to_string())
+        .password("test123".to_string())
+        .build()
+        .unwrap();
+
+    let uri = encode(&original).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.addresses.len(), 3);
+    assert_eq!(decoded.addresses, original.addresses);
+}
+
+#[test]
+fn test_roundtrip_long_values() {
+    let long_password = "a".repeat(200);
+    let long_hostname = format!("{}.vpn.example.com", "sub".repeat(50));
+
+    let original = DeepLinkConfig::builder()
+        .hostname(long_hostname.clone())
+        .addresses(vec!["1.2.3.4:443".parse().unwrap()])
+        .username("user".to_string())
+        .password(long_password.clone())
+        .build()
+        .unwrap();
+
+    let uri = encode(&original).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.hostname, long_hostname);
+    assert_eq!(decoded.password, long_password);
+}
+
+#[test]
+fn test_roundtrip_special_characters() {
+    let original = DeepLinkConfig::builder()
+        .hostname("vpn.example.com".to_string())
+        .addresses(vec!["1.2.3.4:443".parse().unwrap()])
+        .username("user@example.com".to_string())
+        .password("p@ss!w0rd#123".to_string())
+        .custom_sni(Some("cdn-123.example.org".to_string()))
+        .build()
+        .unwrap();
+
+    let uri = encode(&original).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.username, original.username);
+    assert_eq!(decoded.password, original.password);
+    assert_eq!(decoded.custom_sni, original.custom_sni);
+}
+
+#[test]
+fn test_roundtrip_ipv6_addresses() {
+    let original = DeepLinkConfig::builder()
+        .hostname("vpn6.example.com".to_string())
+        .addresses(vec![
+            "[2001:db8::1]:443".parse().unwrap(),
+            "[::1]:8443".parse().unwrap(),
+        ])
+        .username("ipv6user".to_string())
+        .password("ipv6pass".to_string())
+        .build()
+        .unwrap();
+
+    let uri = encode(&original).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.addresses, original.addresses);
+}
+
+#[test]
+fn test_roundtrip_default_values_omitted() {
+    let config = DeepLinkConfig::builder()
+        .hostname("vpn.example.com".to_string())
+        .addresses(vec!["1.2.3.4:443".parse().unwrap()])
+        .username("user".to_string())
+        .password("pass".to_string())
+        .has_ipv6(true) // default value
+        .skip_verification(false) // default value
+        .upstream_protocol(Protocol::Http2) // default value
+        .anti_dpi(false) // default value
+        .build()
+        .unwrap();
+
+    let uri = encode(&config).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    // All defaults should be preserved
+    assert!(decoded.has_ipv6);
+    assert!(!decoded.skip_verification);
+    assert_eq!(decoded.upstream_protocol, Protocol::Http2);
+    assert!(!decoded.anti_dpi);
+}
+
+#[test]
+fn test_roundtrip_non_default_values() {
+    let config = DeepLinkConfig::builder()
+        .hostname("vpn.example.com".to_string())
+        .addresses(vec!["1.2.3.4:443".parse().unwrap()])
+        .username("user".to_string())
+        .password("pass".to_string())
+        .has_ipv6(false) // non-default
+        .skip_verification(true) // non-default
+        .upstream_protocol(Protocol::Http3) // non-default
+        .anti_dpi(true) // non-default
+        .build()
+        .unwrap();
+
+    let uri = encode(&config).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    // All non-defaults should be preserved
+    assert!(!decoded.has_ipv6);
+    assert!(decoded.skip_verification);
+    assert_eq!(decoded.upstream_protocol, Protocol::Http3);
+    assert!(decoded.anti_dpi);
+}
+
+#[test]
+fn test_roundtrip_with_client_random_prefix() {
+    let config = DeepLinkConfig::builder()
+        .hostname("crp.example.com".to_string())
+        .addresses(vec!["1.2.3.4:443".parse::<SocketAddr>().unwrap()])
+        .username("testuser".to_string())
+        .password("testpass".to_string())
+        .client_random_prefix(Some("aabbcc".to_string()))
+        .build()
+        .unwrap();
+
+    let uri = encode(&config).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.hostname, "crp.example.com");
+    assert_eq!(decoded.username, "testuser");
+    assert_eq!(decoded.password, "testpass");
+    assert_eq!(decoded.client_random_prefix, Some("aabbcc".to_string()));
+}
+
+#[test]
+fn test_roundtrip_without_client_random_prefix() {
+    let config = DeepLinkConfig::builder()
+        .hostname("nocrp.example.com".to_string())
+        .addresses(vec!["1.2.3.4:443".parse::<SocketAddr>().unwrap()])
+        .username("testuser".to_string())
+        .password("testpass".to_string())
+        .client_random_prefix(None)
+        .build()
+        .unwrap();
+
+    let uri = encode(&config).unwrap();
+    let decoded = decode(&uri).unwrap();
+
+    assert_eq!(decoded.hostname, "nocrp.example.com");
+    assert_eq!(decoded.client_random_prefix, None);
+}
+
+#[test]
+fn test_invalid_hex_client_random_prefix() {
+    let result = DeepLinkConfig::builder()
+        .hostname("test.example.com".to_string())
+        .addresses(vec!["1.2.3.4:443".parse::<SocketAddr>().unwrap()])
+        .username("testuser".to_string())
+        .password("testpass".to_string())
+        .client_random_prefix(Some("notvalidhex".to_string()))
+        .build();
+
+    assert!(result.is_err());
+}

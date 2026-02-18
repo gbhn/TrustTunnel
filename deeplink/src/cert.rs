@@ -1,0 +1,269 @@
+use crate::error::{DeepLinkError, Result};
+use std::io::Cursor;
+
+/// Convert PEM certificate(s) to concatenated DER bytes.
+/// Handles multiple PEM blocks (certificate chains).
+pub fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
+    let mut cursor = Cursor::new(pem.as_bytes());
+
+    let certs = rustls_pemfile::certs(&mut cursor)
+        .map_err(|e| DeepLinkError::InvalidCertificate(format!("PEM parsing failed: {}", e)))?;
+
+    if certs.is_empty() {
+        return Err(DeepLinkError::InvalidCertificate(
+            "no PEM blocks found in certificate field".to_string(),
+        ));
+    }
+
+    let total_len: usize = certs.iter().map(|c| c.len()).sum();
+    let mut der_output = Vec::with_capacity(total_len);
+
+    for cert in certs {
+        der_output.extend_from_slice(cert.as_ref());
+    }
+
+    Ok(der_output)
+}
+
+/// Read ASN.1 length at the given offset.
+/// Returns (length, new_offset).
+fn read_asn1_length(data: &[u8], offset: usize) -> Result<(usize, usize)> {
+    if offset >= data.len() {
+        return Err(DeepLinkError::InvalidCertificate(
+            "unexpected end of data in ASN.1 length".to_string(),
+        ));
+    }
+
+    let first = data[offset];
+    if first < 0x80 {
+        // Short form: length is in the first byte
+        return Ok((first as usize, offset + 1));
+    }
+
+    // Long form: first byte tells us how many bytes encode the length
+    let num_bytes = (first & 0x7F) as usize;
+    if num_bytes == 0 || offset + 1 + num_bytes > data.len() {
+        return Err(DeepLinkError::InvalidCertificate(
+            "invalid ASN.1 length encoding".to_string(),
+        ));
+    }
+
+    let mut length = 0usize;
+    for i in 0..num_bytes {
+        length = (length << 8) | (data[offset + 1 + i] as usize);
+    }
+
+    Ok((length, offset + 1 + num_bytes))
+}
+
+/// Split concatenated DER certificates into individual certificate blobs.
+fn split_der_certs(data: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let mut certs = Vec::new();
+    let mut offset = 0;
+
+    while offset < data.len() {
+        // Each certificate is an ASN.1 SEQUENCE (tag 0x30)
+        if data[offset] != 0x30 {
+            return Err(DeepLinkError::InvalidCertificate(format!(
+                "expected ASN.1 SEQUENCE (0x30) at offset {}, got 0x{:02X}",
+                offset, data[offset]
+            )));
+        }
+
+        let (body_len, hdr_end) = read_asn1_length(data, offset + 1)?;
+        let cert_end = hdr_end.checked_add(body_len).ok_or_else(|| {
+            DeepLinkError::InvalidCertificate("certificate length overflow".to_string())
+        })?;
+
+        if cert_end > data.len() {
+            return Err(DeepLinkError::InvalidCertificate(
+                "truncated DER certificate".to_string(),
+            ));
+        }
+
+        certs.push(data[offset..cert_end].to_vec());
+        offset = cert_end;
+    }
+
+    Ok(certs)
+}
+
+/// Convert concatenated DER certificates to PEM format.
+pub fn der_to_pem(der: &[u8]) -> Result<String> {
+    let certs = split_der_certs(der)?;
+    let mut pem_blocks = Vec::new();
+
+    for cert_der in certs {
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &cert_der);
+
+        // Split into 64-character lines
+        let lines: Vec<String> = b64
+            .as_bytes()
+            .chunks(64)
+            .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+            .collect();
+
+        pem_blocks.push(format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
+            lines.join("\n")
+        ));
+    }
+
+    Ok(pem_blocks.join("\n") + "\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_PEM: &str = r#"-----BEGIN CERTIFICATE-----
+MIIBkTCB+wIJAKHHCgVZU7PWMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnRl
+c3RjYTAeFw0yMzAxMDEwMDAwMDBaFw0yNDAxMDEwMDAwMDBaMBExDzANBgNVBAMM
+BnRlc3RjYTCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEAw9nQx8KLBs9LKVqK
+6WZ7aYvMQXAA1tP9VbFqFBDzDYJoFZxKZPbZKGOZOmKMJMxLCqN6qLlPWnZrYWXL
++3A8PqYqLqvMVxQ8QZQZQZQZQZQZQZQZQZQZQZQZQZQZQZQCAQIDAQABMA0GCSqG
+SIb3DQEBCwUAA4GBAJKCfpqLG3PkKE4L7VVzLqH4E7FkLqZxMQZQZQZQZQZQZQZQ
+-----END CERTIFICATE-----"#;
+
+    #[test]
+    fn test_pem_to_der() {
+        let result = pem_to_der(SAMPLE_PEM);
+        assert!(result.is_ok());
+        let der = result.unwrap();
+        assert!(!der.is_empty());
+    }
+
+    #[test]
+    fn test_pem_to_der_empty() {
+        let result = pem_to_der("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pem_to_der_invalid() {
+        let result = pem_to_der("not a certificate");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_der_to_pem_single_cert() {
+        // Simple DER certificate: SEQUENCE with short length
+        let der = vec![0x30, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05];
+        let result = der_to_pem(&der);
+        assert!(result.is_ok());
+        let pem = result.unwrap();
+        assert!(pem.starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(pem.ends_with("-----END CERTIFICATE-----\n"));
+        assert_eq!(pem.matches("-----BEGIN CERTIFICATE-----").count(), 1);
+    }
+
+    #[test]
+    fn test_der_to_pem_multiple_certs() {
+        // Two small DER certificates concatenated
+        let cert1 = vec![0x30, 0x03, 0x01, 0x02, 0x03]; // SEQUENCE of 3 bytes
+        let cert2 = vec![0x30, 0x04, 0x04, 0x05, 0x06, 0x07]; // SEQUENCE of 4 bytes
+        let mut der = cert1.clone();
+        der.extend_from_slice(&cert2);
+
+        let result = der_to_pem(&der);
+        assert!(result.is_ok());
+        let pem = result.unwrap();
+
+        // Should have two PEM blocks
+        assert_eq!(pem.matches("-----BEGIN CERTIFICATE-----").count(), 2);
+        assert_eq!(pem.matches("-----END CERTIFICATE-----").count(), 2);
+    }
+
+    #[test]
+    fn test_der_to_pem_long_form_length() {
+        // DER certificate with long form length: 0x30 0x81 0x05 (length = 5)
+        let der = vec![0x30, 0x81, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05];
+        let result = der_to_pem(&der);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_der_to_pem_invalid_tag() {
+        // Invalid tag (not 0x30 SEQUENCE)
+        let der = vec![0x31, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05];
+        let result = der_to_pem(&der);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_der_to_pem_truncated() {
+        // Claims to have 10 bytes but only provides 5
+        let der = vec![0x30, 0x0A, 0x01, 0x02, 0x03, 0x04, 0x05];
+        let result = der_to_pem(&der);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_roundtrip_der_pem_der() {
+        // Use synthetic DER certificate (valid ASN.1 SEQUENCE structure)
+        let original_der = vec![0x30, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05];
+
+        // DER -> PEM
+        let pem = der_to_pem(&original_der).unwrap();
+
+        // Should produce valid PEM
+        assert!(pem.contains("-----BEGIN CERTIFICATE-----"));
+        assert!(pem.contains("-----END CERTIFICATE-----"));
+
+        // PEM -> DER (roundtrip)
+        let der_again = pem_to_der(&pem).unwrap();
+        assert_eq!(original_der, der_again);
+    }
+
+    #[test]
+    fn test_roundtrip_multi_cert_chain() {
+        // Two synthetic DER certificates
+        let cert1 = vec![0x30, 0x03, 0x01, 0x02, 0x03];
+        let cert2 = vec![0x30, 0x04, 0x04, 0x05, 0x06, 0x07];
+        let mut original_der = cert1.clone();
+        original_der.extend_from_slice(&cert2);
+
+        // DER -> PEM
+        let pem = der_to_pem(&original_der).unwrap();
+
+        // Should have two certificates
+        assert_eq!(pem.matches("-----BEGIN CERTIFICATE-----").count(), 2);
+
+        // PEM -> DER (roundtrip)
+        let der_again = pem_to_der(&pem).unwrap();
+        assert_eq!(original_der, der_again);
+    }
+
+    #[test]
+    fn test_split_der_certs_empty() {
+        let result = split_der_certs(&[]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_read_asn1_length_short_form() {
+        let data = vec![0x05, 0x01, 0x02, 0x03, 0x04, 0x05];
+        let (length, offset) = read_asn1_length(&data, 0).unwrap();
+        assert_eq!(length, 5);
+        assert_eq!(offset, 1);
+    }
+
+    #[test]
+    fn test_read_asn1_length_long_form() {
+        // Long form: 0x81 means next 1 byte is the length
+        let data = vec![0x81, 0x7F, 0x00]; // length = 127
+        let (length, offset) = read_asn1_length(&data, 0).unwrap();
+        assert_eq!(length, 127);
+        assert_eq!(offset, 2);
+    }
+
+    #[test]
+    fn test_read_asn1_length_two_byte_long_form() {
+        // Long form: 0x82 means next 2 bytes are the length
+        let data = vec![0x82, 0x01, 0x00, 0x00]; // length = 256
+        let (length, offset) = read_asn1_length(&data, 0).unwrap();
+        assert_eq!(length, 256);
+        assert_eq!(offset, 3);
+    }
+}

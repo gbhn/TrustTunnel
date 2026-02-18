@@ -246,28 +246,45 @@ sudo systemctl enable --now trusttunnel
 
 #### Export client configuration
 
-The endpoint binary is capable of generating the client configuration for
-a particular user.
+The endpoint binary can generate client configurations in two formats:
 
-This configuration contains all necessary information that is required to
-connect to the endpoint.
+##### Deep-Link Format (Default)
 
-To generate the configuration, run the following command:
+Generate a compact `tt://` URI suitable for QR codes and mobile apps:
 
 ```shell
-# <client_name> - name of the client those credentials will be included in the configuration
+# <client_name> - name of the client whose credentials will be included
 # <public_ip> - `ip` or `ip:port` that the user will use to connect to the endpoint
 #             If only `ip` is specified, the port from the `listen_address` field will be used
 cd /opt/trusttunnel/
 ./trusttunnel_endpoint vpn.toml hosts.toml -c <client_name> -a <public_ip>
+
+# Or explicitly specify the format:
+./trusttunnel_endpoint vpn.toml hosts.toml -c <client_name> -a <public_ip> --format deeplink
 ```
 
-This will print the configuration with the credentials for the client named
-`<client_name>`.
+This outputs a `tt://` deep-link URI that can be:
 
-The generated client configuration could be used to set up the
-[TrustTunnel Flutter Client][trusttunnel-flutter-client], refer to the
-documentation in [its repository][trusttunnel-flutter-configuration].
+- Shared directly with mobile clients
+- Used with the [CLI client][trusttunnel-client] or [TrustTunnel Flutter Client][trusttunnel-flutter-client]
+
+**Note**: If your certificate is signed by a trusted CA (e.g., Let's Encrypt), it will be
+automatically omitted from the deep-link to keep it compact. Self-signed
+certificates are included automatically.
+
+##### TOML Format (For CLI Client)
+
+Generate a traditional TOML configuration file:
+
+```shell
+cd /opt/trusttunnel/
+./trusttunnel_endpoint vpn.toml hosts.toml -c <client_name> -a <public_ip> --format toml
+```
+
+This outputs a TOML configuration file suitable for the CLI client.
+
+Both formats contain all necessary information to connect to the endpoint. See the
+[TrustTunnel Flutter Client documentation][trusttunnel-flutter-configuration] for setup instructions.
 
 Congratulations! You've done setting up the endpoint!
 

@@ -4,6 +4,7 @@ extern crate log;
 extern crate macros;
 
 pub mod authentication;
+pub mod cert_verification;
 pub mod client_config;
 pub mod core;
 pub mod log_utils;
